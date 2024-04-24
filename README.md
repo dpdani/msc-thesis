@@ -4,5 +4,5 @@
 
 Daniele Parmeggiani
 
-MSc Final Dissertation.
+MSc Final Dissertation
 
