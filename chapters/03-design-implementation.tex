@@ -5,13 +5,38 @@
 
 \section{Design overview}
 
-\subsection{Maier's}
-
-rehashing
-
 \subsection{Python's dictionary}
 
 split index/data
+
+
+\subsection{Maier's}
+
+Maier's hashmap implementation has an important difference when compared with Python's dictionary.
+In the latter, the least-significant bits of the hash are used to determine the position in the linear array; that is, $d_0(x) = x \mod 2^s$, with $s$ being the logarithm base-2 of the dictionary size.
+While in the former, the most-significant bits are used: $d_0 = x \gg (64 - s)$, where $\gg$ is a right-shift operation.
+
+An extensive reasoning as to why Python's hashmap chose this scheme can be found in \cite{dict-comment-hash}.
+While the reason why Maier chose the right-shift based scheme is so that the relative position of two keys which are in the same probe doesn't change as much as in the alternative, when the array is resized.
+That is, consider a key $x$ s.t. $h(x) \mathbin{\&} 2^{s+1} = 0$, and a key $y$ s.t. $h(x) \mathbin{\&} 2^{s+1} = 1$.
+If they were colliding before resizing from $s$ to $s+1$(i.e. $h(x) \mathbin{\&} 2^s-1 = h(y) \mathbin{\&} 2^s-1$), they will not collide in the corresponding hashmap of size $s+1$.
+But this creates an unexpected problem.
+It is trivial to see that $d_0(x)' = d_0(x)$.
+The $d_0$ position of $y$ will have changed from $d_0(y) = h(y) \mathbin{\&} 2^s-1$ to $d_0(y)' = h(y) \mathbin{\&} 2^{s+1}-1$.
+In other words, $d_0(y)' = d_0(y) + 2^s$.
+
+The problem with this behavior is that the position in the new array cannot be safely determined by looking at the prior array, without reading the actual hashes of each key in a probe.
+
+This problem is avoided by choosing the most-significant bits scheme: $d_0(y) = h(y) \gg (64 - s)$, and $d_0(y)' = h(y) \gg (64 - s - 1)$.
+In other words, $d_0(y)' = d_0(y) \cdot 2 + 1$.
+While $d_0(x) = h(x) \gg (64 - s)$, and $d_0(x)' = h(x) \gg (64 - s - 1) \Rightarrow d_0(x)' = d_0(x) \cdot 2$.
+
+It follows that the nodes of a cluster in the prior array will ``stay close to each other'' in the new array.
+This behavior enables avoiding the necessity to exercise care in the moving of nodes from one generation of the hashmap to the next, resulting in much less synchronization overhead.
+
+Though, given this fundamental difference in picking the hash bits that determine the position in the hashmap, it was necessary to re-hash Python-generated hashes, or else the $d_0$ position of very many objects would be $0$.
+This is done with a cheap CRC32 hardware instruction, that Maier also used in his implementation.
+Thus, the required property of hashes being ``\emph{large} pseudo-random numbers,'' is respected.
 
 \subsection{Reservation Buffers}
 
@@ -26,6 +51,18 @@ split index/data
 \subsection{Lock-freedom}
 
 \section{Insert or update}
+
+The InsertOrUpdate (or rather, ExpectedInsertOrUpdate) routine departs from Maier's design in that it doesn't expect the user to providde an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special NOT\_FOUND object fir a successful insertion, in which case either NOT\_FOUND ot ANY were the expected value.)
+If the expected value was not the stored value (or the compare and set low-level call failed and the newly read value then differed from the expected one,) then a special EXPECTATION\_FAILED object is returned.
+
+There's also another special value called ANY that can be used as the expected value to signify that whatever the current value is, even an absent value, it should be replaced with the desired value.
+The three special objects ANY, NOT\_FOUND, and EXPECTATION\_FAILED cannot be used as keys or values in AtomicDict, so as to guarantee thei semantics are consistent (cf. EXPECTATION\_FAILED being a value returned by this routine.)
+
+If the expected value is either ANy or NOT\_FOUND, there is an insertion fast-path used in which the $d_0$ element in the index is CASed with the entry reserved without going through the currently stored data in the index.
+If this CAS succeeds, then the operation is completed.
+If it doesn't the general code path is followed.
+Notice that this doesn't compromise correctness: if the $d_0$ node was in fact empty, it means that the key wasn't in the dictionary.
+
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
@@ -46,7 +83,55 @@ split index/data
 \subsection{Non-lock-freedom}
 
 \section{Batch lookup}
+
+Inspired by the design of DRAM-HiT, this method was added so as to amortize the cost of multiple memory accesses when a program wants to read a number of keys from the hash table.
+It deviates from \cite{dramhit} in that it does not require the user to continuously poll the table for results.
+Instead, a batch of keys can be submitted for lookup, in one invocation.
+
+An example call:
+
+\begin{lstlisting}[language=Python]
+foo = AtomicDict({'a': 1, 'b': 2, 'c': 3})
+result = foo.batch_getitem({
+	'a': None,
+	'b': None,
+	'f': None,
+})
+assert result == {
+	'a': 1,
+	'b': 2,
+	'f': <cereggii.NOT_FOUND>,
+}
+\end{lstlisting}
+
+The \texttt{<cereggii.NOT\_FOUND>} object is a special, global object that cannot be inserted into \texttt{AtomicDict}.
+
+The operation involves the prefetching of each distance-0 location of the keys in the batch.
+This results in an amortization of the cost of individual memory accesses: if the number of prefetches issued is sufficiently large (how large depends on the hardware), then the processor will be stalled waiting for the first read, while the subsequent ones will be read from the cache without incurring in the cost of main memory access.
+This behavior is cheaper-by-comparison: it is cheaper to prefetch several keys, possibly blocking at the first one read, than to block at every read.
+
+NUMA architectures will enjoy this mechanism particularly: when prefetches are issued at remote memory addresses, the comparative cost of the amortized reads is much less than the sum of the costs of each individual read.
+
+In talking about NUMA architectures, it is generally also possible to argue that the cost of a remote access may be hidden by the possibly many local memory accesses that precede it.
+Such is not our case: the index, which is allocated as a contiguous array, will reside entirely in one NUMA node.
+Thus, a thread accessing the index will either only issue operations to remote memory, or to local memory.\footnote{%
+	A further endeavor may comprise the partitioning of a hash table into several shards, which in turn are managed by one or multiple threads associated to a single NUMA node, such that any given key may only reside in one shard (e.g. by using the least-significant bits of the hash to associate a key with a shard).
+	
+	Mimicking the design of DRAM-HiT, the user thread would submit requests to a message queue which is consumed by the threads associated with a shard.
+	The design need not be asynchronous as in \cite{dramhit} to gain the speed-up of stronger memory associativity. XXX check this
+}
+
+The batch is subdivided into chunks of a configurable size.
+This is intended to prevent the over-fetching of memory.
+That is, the cache of an individual processor may become overly filled with the prefetched portions of the index, and the hardware will proceed to evict lines of cache before they are actually read by the lookups that requested them.
+
 \subsection{Linearization}
+
+The linearization of this method is intended as the individual linearizations of the distinct lookup operations.
+Each distinct lookup is linearizable, although the overall invocation is not.
+Therefore, it is possible for a result of this method to not be sequentially consistent.
+
+
 \subsection{Lock-freedom}
 
 \section{Aggregate}
