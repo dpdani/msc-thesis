@@ -16,7 +16,7 @@ Maier's hashmap implementation has an important difference when compared with Py
 In the latter, the least-significant bits of the hash are used to determine the position in the linear array; that is, $d_0(x) = x \mod 2^s$, with $s$ being the logarithm base-2 of the dictionary size.
 While in the former, the most-significant bits are used: $d_0 = x \gg (64 - s)$, where $\gg$ is a right-shift operation.
 
-An extensive reasoning as to why Python's hashmap chose this scheme can be found in \cite{dict-comment-hash}.
+An extensive reasoning as to why Python's hashmap chose this scheme can be found in~\cite{dict-comment-hash}.
 While the reason why Maier chose the right-shift based scheme is so that the relative position of two keys which are in the same probe doesn't change as much as in the alternative, when the array is resized.
 That is, consider a key $x$ s.t. $h(x) \mathbin{\&} 2^{s+1} = 0$, and a key $y$ s.t. $h(x) \mathbin{\&} 2^{s+1} = 1$.
 If they were colliding before resizing from $s$ to $s+1$(i.e. $h(x) \mathbin{\&} 2^s-1 = h(y) \mathbin{\&} 2^s-1$), they will not collide in the corresponding hashmap of size $s+1$.
@@ -47,13 +47,32 @@ Thus, the required property of hashes being ``\emph{large} pseudo-random numbers
 
 
 \section{Lookup}
+
+\lstinputlisting[
+	numbers=left,
+	stepnumber=5,
+	numberfirstline=true,
+	language={C},
+	caption={Lookup Operation},
+	label={lst:lookup}
+]{listings/lookup.c}
+
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
 \section{Insert or update}
 
-The InsertOrUpdate (or rather, ExpectedInsertOrUpdate) routine departs from Maier's design in that it doesn't expect the user to providde an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special NOT\_FOUND object fir a successful insertion, in which case either NOT\_FOUND ot ANY were the expected value.)
-If the expected value was not the stored value (or the compare and set low-level call failed and the newly read value then differed from the expected one,) then a special EXPECTATION\_FAILED object is returned.
+\lstinputlisting[
+	numbers=left,
+	stepnumber=5,
+	numberfirstline=true,
+	language={C},
+	caption={ExpectedInsertOrUpdate Operation},
+	label={lst:insert}
+]{listings/insert.c}
+
+The InsertOrUpdate (or rather, ExpectedInsertOrUpdate) routine departs from Maier's design in that it doesn't expect the user to providde an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special NOT\_FOUND object for a successful insertion, in which case either NOT\_FOUND ot ANY were the expected value.)
+If the expected value was not the stored value (or the compare and set low-level call failed and the newly read value then differed from the expected one), then a special EXPECTATION\_FAILED object is returned.
 
 There's also another special value called ANY that can be used as the expected value to signify that whatever the current value is, even an absent value, it should be replaced with the desired value.
 The three special objects ANY, NOT\_FOUND, and EXPECTATION\_FAILED cannot be used as keys or values in AtomicDict, so as to guarantee thei semantics are consistent (cf. EXPECTATION\_FAILED being a value returned by this routine.)
@@ -67,6 +86,16 @@ Notice that this doesn't compromise correctness: if the $d_0$ node was in fact e
 \subsection{Lock-freedom}
 
 \section{Delete}
+
+\lstinputlisting[
+	numbers=left,
+	stepnumber=5,
+	numberfirstline=true,
+	language={C},
+	caption={Delete Operation},
+	label={lst:delete}
+]{listings/delete.c}
+
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
@@ -85,7 +114,7 @@ Notice that this doesn't compromise correctness: if the $d_0$ node was in fact e
 \section{Batch lookup}
 
 Inspired by the design of DRAM-HiT, this method was added so as to amortize the cost of multiple memory accesses when a program wants to read a number of keys from the hash table.
-It deviates from \cite{dramhit} in that it does not require the user to continuously poll the table for results.
+It deviates from~\cite{dramhit} in that it does not require the user to continuously poll the table for results.
 Instead, a batch of keys can be submitted for lookup, in one invocation.
 
 An example call:
