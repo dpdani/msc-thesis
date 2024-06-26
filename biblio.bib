@@ -8,8 +8,18 @@
 	isbn = {9780123973375},
 	publisher = {Morgan Kaufmann Publishers Inc.},
 	address = {San Francisco, CA, USA},
-	edition = {1st},
+	edition = {1st edition},
 	abstract = {Revised and updated with improvements conceived in parallel programming courses, The Art of Multiprocessor Programming is an authoritative guide to multicore programming. It introduces a higher level set of software development skills than that needed for efficient single-core programming. This book provides comprehensive coverage of the new principles, algorithms, and tools necessary for effective multiprocessor programming. Students and professionals alike will benefit from thorough coverage of key multiprocessor programming issues. This revised edition incorporates much-demanded updates throughout the book, based on feedback and corrections reported from classrooms since 2008 Learn the fundamentals of programming multiple threads accessing shared memory Explore mainstream concurrent data structures and the key elements of their design, as well as synchronization techniques from simple locks to transactional memory systems Visit the companion site and download source code, example Java programs, and materials to support and enhance the learning experience Table of Contents 1. Introduction 2. Mutual Exclusion 3. Concurrent Objects and Linearization 4. Foundations of Shared Memory 5. The Relative Power of Synchronization Methods 6. The Universality of Consensus 7. Spin Locks and Contention 8. Monitors and Blocking Synchronization 9. Linked Lists: the Role of Locking 10. Concurrent Queues and the ABA Problem 11. Concurrent Stacks and Elimination 12. Counting, Sorting and Distributed Coordination 13. Concurrent Hashing and Natural Parallelism 14. Skiplists and Balanced Search 15. Priority Queues 16. Futures, Scheduling and Work Distribution 17. Barriers 18. Transactional Memory Appendices}
+}
+
+@book{the-art-vol-2,
+	author = {Knuth, Donald E.},
+	title = {The art of computer programming,  volume 3: sorting and searching},
+	edition = {2nd edition},
+	year = {1998},
+	isbn = {0201896850},
+	publisher = {Addison Wesley Longman Publishing Co., Inc.},
+	address = {USA}
 }
 
 @online{dabeaz-gil,
@@ -81,14 +91,6 @@
 }
 
 @inproceedings{mimalloc,
-	title={Mimalloc: Free List Sharding in Action},
-	author={Daan Leijen and Benjamin G. Zorn and Leonardo Mendonça de Moura},
-	booktitle={Asian Symposium on Programming Languages and Systems},
-	year={2019},
-	url={https://api.semanticscholar.org/CorpusID:198363081}
-}
-
-@inproceedings{mimalloc,
 	author = {Leijen, Daan and Zorn, Benjamin and de Moura, Leonardo},
 	editor = {Lin, Anthony Widjaja},
 	title = {Mimalloc: Free List Sharding in Action},
@@ -99,8 +101,8 @@
 	pages = {244--265},
 	abstract = {Modern memory allocators have to balance many simultaneous demands, including performance, security, the presence of concurrency, and application-specific demands depending on the context of their use. One increasing use-case for allocators is as back-end implementations of languages, such as Swift and Python, that use reference counting to automatically deallocate objects. We present mimalloc, a memory allocator that effectively balances these demands, shows significant performance advantages over existing allocators, and is tailored to support languages that rely on the memory allocator as a backend for reference counting. Mimalloc combines several innovations to achieve this result. First, it uses three page-local sharded free lists to increase locality, avoid contention, and support a highly-tuned allocate and free fast path. These free lists also support temporal cadence, which allows the allocator to predictably leave the fast path for regular maintenance tasks such as supporting deferred freeing, handling frees from non-local threads, etc. While influenced by the allocation workload of the reference-counted Lean and Koka programming language, we show that mimalloc has superior performance to modern commercial memory allocators, including tcmalloc and jemalloc, with speed improvements of 7{\%} and 14{\%}, respectively, on redis, and consistently out performs over a wide range of sequential and concurrent benchmarks. Allocators tailored to provide an efficient runtime for reference-counting languages reduce the implementation burden on developers and encourage the creation of innovative new language designs.},
 	isbn = {978-3-030-34175-6},
+	url={https://api.semanticscholar.org/CorpusID:198363081},
 }
-
 
 @online{hettinger-dict,
 	author = {Hettinger, Raymond},
@@ -145,7 +147,7 @@
 	doi = {10.1145/3309206},
 	abstract = {Concurrent hash tables are one of the most important concurrent data structures, which are used in numerous applications. For some applications, it is common that hash table accesses dominate the execution time. To efficiently solve these problems in parallel, we need implementations that achieve speedups in highly concurrent scenarios. Unfortunately, currently available concurrent hashing libraries are far away from this requirement, in particular, when adaptively sized tables are necessary or contention on some elements occurs.Our starting point for better performing data structures is a fast and simple lock-free concurrent hash table based on linear probing that is, however, limited to word-sized key-value types and does not support dynamic size adaptation. We explain how to lift these limitations in a provably scalable way and demonstrate that dynamic growing has a performance overhead comparable to the same generalization in sequential hash tables.We perform extensive experiments comparing the performance of our implementations with six of the most widely used concurrent hash tables. Ours are considerably faster than the best algorithms with similar restrictions and an order of magnitude faster than the best more general tables. In some extreme cases, the difference even approaches four orders of magnitude.All our implementations discussed in this publication can be found on github [17].},
 	journal = {ACM Trans. Parallel Comput.},
-	month = {feb},
+	month = {2},
 	articleno = {16},
 	numpages = {32},
 	keywords = {Concurrency, dynamic data structures, experimental analysis, hash table, lock-freedom, transactional memory}

@@ -1,16 +1,57 @@
-\chapter{Proposed Design and Implementation}
+\chapter{Proposed Design and Implementation}\label{ch:design-and-implementation}
 
-\cite{cereggii}
+The implementation is available online at~\cite{cereggii}.
+
 \cite{peniocereus-greggii}
 
-\section{Design overview}
+$O(t)$
 
-\subsection{Python's dictionary}
+$\textrm{atw} \textrm{rgw} \textrm{rgr}$
 
-split index/data
+\section{Design overview}\label{sec:design-overview}
+
+\subsection{Python's dictionary}\label{subsec:python-dict}
+
+A lot of the basis for \texttt{AtomicDict} has been inspired from Python's \texttt{dict}.
+Namely, that the hash table itself is instead an index over another table called the data table.
+In the latter is where the pointers to the keys and values objects reside.
+
+This improves on both the storage space and the iteration speed.
+In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be \~$(1 - F_r)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
+Instead, there will be \~$1 - F_r$ empty $O(8)$-bytes slots in the index, while the keys and value pairs will be stored in a separate compact table.
+That is, the data table will have a fill ratio of \~100\%.
+Thus, when iterating over the keys in the dictionary, the compact data table will serve as the basis for the iteration, instead of the sparse index.
+Also, note that the size of index nodes will vary depending on the size of the key set: when the key set is small there is no need to index the data table with 64-bit numbers, instead the size of nodes is chosen dynamically, from a lower bound of 1-byte, when the cardinality of the key set is $\leq 64$.
+As the set of keys becomes larger than the maximum allowed fill ratio,\footnote{%
+	I.e. $2/3$, both in \texttt{dict} and \texttt{AtomicDict}.
+} then the migration process is initiated, which does not usually touch the data table, but only the smaller index instead.
+The data table is only modified when it needs to be reduced after a large number of deletes, which are supposedly modest in number.
+
+As described in~\cite[\S13.1]{art-mp}, we should be inclined to think that the usage of the dictionary consists of 90\% lookups, 9\% insertions, and 1\% deletes.
+In \S\ref{sec:dict-metrics} we confirm this rule-of-thumb.
+We further expose a counter-intuitive notion: most lookups fail.
+That is, most lookups return that the key searched for, was not found in the hash table.\footnote{%
+	See \S\ref{sec:dict-metrics} on \texttt{\_Py\_dict\_lookup} for the full details.
+}
+
+This may be explained by the presence of iterations, that is, of operations that return the entire currently stored set of keys.
+Thus, it may be that in most cases, when a program looks up one specific key in the dictionary, it really isn't known whether the key is there or not.
+And furthermore, instead of looking up individual keys which are known to be there, programs prefer to iterate over all keys.
+This would result in individual lookups having a tendency to fail.
+
+Based on this, we enhance the table hashing with the Robin Hood scheme, known in the literature~\cite{robin-hood,bolt}, which is especially effective in pruning searches for keys which are not in the table.
+Our approach, detailed in the following \S\ref{subsec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the dictionary to this scheme: we maintain the Robin Hood invariants, described later, as long as we can do so in a lock-free manner.
+When the maintenance of those invariants requires an increasing number of atomic operations to be carried out in the index, we instead fall back to regular linear probing.
+When doing so, before actually inserting a key that does not maintain the Robin Hood invariants, we mark the hash table as not anymore compact.
+A compact operation can be requested by the user to recover the Robin Hood invariants.
+This operation essentially consists of enlarging the hash table so that the invariants can be maintained.
+
+We also optionally store tags in the nodes, further stealing some bits, in order to reduce the necessity of lookups into the data table.
+The tag contains a portion of the hash of the key in the data table, when the tag does is not the same as the equivalent portion of the hash of the key looked up, the relevant entry in the data table is not visited.
+This reduces the cost of having split index and data tables.
 
 
-\subsection{Maier's}
+\subsection{Maier's}\label{subsec:maier}
 
 Maier's hashmap implementation has an important difference when compared with Python's dictionary.
 In the latter, the least-significant bits of the hash are used to determine the position in the linear array; that is, $d_0(x) = x \mod 2^s$, with $s$ being the logarithm base-2 of the dictionary size.
@@ -38,15 +79,168 @@ Though, given this fundamental difference in picking the hash bits that determin
 This is done with a cheap CRC32 hardware instruction, that Maier also used in his implementation.
 Thus, the required property of hashes being ``\emph{large} pseudo-random numbers,'' is respected.
 
-\subsection{Reservation Buffers}
+\subsection{Reservation Buffers}\label{subsec:reservation-buffers}
 
-\subsection{Lazy Robin-Hood}
+The usage of pages for the data table, implicitly creates zones of contention.
+When threads want to add a new key into the hash table, the most-recently added page is the one in which the insertion is attempted.
+So that effectively all threads are trying to contend one page of the data table.
 
-\cite[CMPXCHG--Compare and Exchange]{x86-64}
+The degree to which contention is exhibited depends on the strategy with which threads decide which free entry in the page they wish to take for the new item.
+Consider a strategy in which the lowermost index is always chosen: every thread always tries to reserve the same entry, with only one thread succeeding at any given time.
+
+A simple, yet much better, alternative is to treat the page itself as a sort of hash table.
+That is, instead of choosing an entry based on the current availability, an entry is chosen based on the hash of the key.
+Thus, with sufficiently uniformly distributed hash values, the contention is greatly reduced.
+
+The reservation itself needs to be carried out with atomic operations, so that the cost of inserting one key is always at least two atomic operations: one write to the data table, and one write to the index.
+In order to amortize the cost of having a data table separate from the actual hash table (the index), instead of reserving one entry at every insertion, we let threads reserve a configurable number of entries, four per default.\footnote{%
+	The allowed values are 1, 2, 4, 8, 16, 32, or 64.
+	With 64 being the size of an entire data table page.
+}
+When a thread has no available reservations, it resolves to finding a free entry based on the key's hash as described before, reserving four entries; instead when a thread has reservations at disposal, it directly writes into the free entries that it owns, using regular (non-atomic) writes.
+
+In summary, the expected number of atomic writes per inserted key is $1 + 1/4 = 1.25$.
+
+\subsection{Accessor Storage}\label{subsec:accessor-storage}
+
+The reservation buffer, along with other things, is stored inside an accessor-local storage.
+It contains:
+\begin{enumerate}
+	\item a mutex;
+	\item a local view of the size of the dictionary;
+	\item a flag indicating whether this accessor (thread) is participating in the current migration; and
+	\item the reservation buffer.
+\end{enumerate}
+
+The mutex itself protects the contents of the accessor storage.
+This may seem counter-intuitive, but it is actually very useful.
+First of all, when a dictionary needs to be freed, all the allocated accessor storages need to be freed as well.
+In order to do this, the accessor storages are kept in a list.
+A thread freeing the dictionary traverses the list to free the accessor storages, and a thread accessing the dictionary for the first time, appends its newly created accessor storage to the list.
+
+The mutex itself is thus generally held only by its accessor, which releases it at the end of any insert, or delete operation.
+
+Furthermore, when a thread becomes the leader of a migration (detailed later), it may necessitate to modify the reservation buffers of the other threads, in case the data table is modified.
+E.g.\ during a shrink migration, the data table is shrunk, as well as the index, in order to free unoccupied space.
+That also entails that the entries in the reservation buffers need to be changed, because their location relative to the start of the data table has changed.
 
 
+\subsection{Synchronous Operations}\label{subsec:synchronous-operations}
 
-\section{Lookup}
+In abstract terms, the presence of the list of thread-local mutexes enables the creation of cuts in the execution of dictionary operations, whereas the acquisition of all the thread-local mutexes by one thread creates a distinction between the operations that happened before this circumstance and those that happened after it.
+
+This crucial characteristic, which is required e.g.\ for the re-ordering of data table entries, enables also many more usages.
+A few are described in the following sections.
+In particular, it enables a very simple mechanism for ensuring that all accessors come to know the presence of a hash table migration, for establishing the correct size of the hash table, and for performing a sequentially consistent iteration of the items in the hash table.
+
+All of these operations are called synchronous because they all share the common necessity to be carried out sequentially by one thread, or rather that at least one part of their execution needs to be performed sequentially.
+For instance, the hash table migration enjoys the help of more than one thread, but requires a step in which the leader performs the necessary alterations to the data table before other threads can join in the migration.
+
+The addition of this mechanism ensures that the dictionary presented here is capable both of performant lock-free operations, and of complex operations that require the exclusive access to the entire dictionary in order to be performed without a prohibitive number of expensive atomic memory writes.
+The properties that a synchronous operation is sequential and ensured to be mutually exclusive w.r.t.\ all other threads, make it also very simple to be explained and understood, an important characteristic for collaborative development.
+
+
+\subsection{Lazy Robin-Hood}\label{subsec:lazy-robin-hood}
+
+The Robin Hood state for the hash table is essentially the distance each key has from its distance-0 position.
+In other words, the number of collisions.
+
+In order to keep track of this distance, we steal some bits from the nodes in the index.
+According to~\cite[Corollary to Theorem~3]{robin-hood}, the expected number of collisions per probe for a full table is $\Theta(\log n)$, e.g.\ four for a table of size 64.
+Such is a relatively low number, thus we can steal two bits, or in general $\log \log n$ bits, from the index nodes.
+
+We do so, by following the values in Table~\ref{tab:robin-hood-nodes}.
+As you can observe the proposed hash table has definite minimum and maximum sizes, respectively of $2^{6} = 64$ and $2^{56} \approxeq 7.2 \times 10^{16}$.
+
+\begin{table}
+	\centering\begin{tabular}{llll|llll}
+		$\log n$ & Node & Distance & Tag & $\log n$ & Node & Distance & Tag\\
+		\hline
+		6 & 8 & 2 & 0 & 32 & 64 & 5 & 27 \\
+		7 & 16 & 3 & 6 & 33 & 64 & 6 & 25 \\
+		8 & 16 & 3 & 5 & 34 & 64 & 6 & 24 \\
+		9 & 16 & 4 & 3 & 35 & 64 & 6 & 23 \\
+		10 & 16 & 4 & 2 & 36 & 64 & 6 & 22 \\
+		11 & 32 & 4 & 17 & 37 & 64 & 6 & 21 \\
+		12 & 32 & 4 & 16 & 38 & 64 & 6 & 20 \\
+		13 & 32 & 4 & 15 & 39 & 64 & 6 & 19 \\
+		14 & 32 & 4 & 14 & 40 & 64 & 6 & 18 \\
+		15 & 32 & 4 & 13 & 41 & 64 & 6 & 17 \\
+		16 & 32 & 4 & 12 & 42 & 64 & 6 & 16 \\
+		17 & 32 & 5 & 10 & 43 & 64 & 6 & 15 \\
+		18 & 32 & 5 & 9 & 44 & 64 & 6 & 14 \\
+		19 & 32 & 5 & 8 & 45 & 64 & 6 & 13 \\
+		20 & 32 & 5 & 7 & 46 & 64 & 6 & 12 \\
+		21 & 32 & 5 & 6 & 47 & 64 & 6 & 11 \\
+		22 & 32 & 5 & 5 & 48 & 64 & 6 & 10 \\
+		23 & 32 & 5 & 4 & 49 & 64 & 6 & 9 \\
+		24 & 32 & 5 & 3 & 50 & 64 & 6 & 8 \\
+		25 & 32 & 5 & 2 & 51 & 64 & 6 & 7 \\
+		26 & 64 & 5 & 33 & 52 & 64 & 6 & 6 \\
+		27 & 64 & 5 & 32 & 53 & 64 & 6 & 5 \\
+		28 & 64 & 5 & 31 & 54 & 64 & 6 & 4 \\
+		29 & 64 & 5 & 30 & 55 & 64 & 6 & 3 \\
+		30 & 64 & 5 & 29 & 56 & 64 & 6 & 2 \\
+		31 & 64 & 5 & 28 & \\
+	\end{tabular}
+	\caption{Sizes of internal fields of nodes in the index hash table. Let $n$ be the capacity of the table, and \emph{Node}, \emph{Distance}, and \emph{Tag} refer to their sizes, expressed in number of bits.}
+	\label{tab:robin-hood-nodes}
+\end{table}
+
+Consider the general situation in which a new item is being inserted.
+Paraphrasing from~\cite{robin-hood}:
+\begin{quote}
+	Suppose that element $A$ is at location $l$, at distance $d_a$ from its distance-0 slot, and $B$ is to be inserted (or moved).
+	Suppose $B$ has been denied allocation of its first $d_b - 1$ choices and we are now considering $l$, its $d_b$th choice.
+\end{quote}
+
+Then, the Robin Hood invariant, or heuristic, maintains that:\footnote{
+	As put by Celis et al. in~\cite{robin-hood}:
+	\begin{quote}
+		This procedure of ``taking from the rich and giving to the poor'' gives rise to the name Robin Hood hashing.
+		Like Robin Hood, it does not change the average wealth (mean probe length), only its distribution.
+		It is clear that the principal effect is to substantially reduce the variance.
+	\end{quote}
+}
+
+\begin{tabular}{rp{8cm}}
+	if $d_a \geq d_b$: & $A$ retains $l$, the insertion of $B$ continues by considering its $(d_b + 1)$st choice; \\
+	if $d_b > d_a$: & $B$ displaces $A$ from $l$, the insertion procedure for $A$ is applied starting with its next $(d_a + 1)$st choice; \\
+\end{tabular}
+
+Comparing with~\cite{robin-hood}, we have slightly modified the invariant so as to favor avoiding moving elements on a tie.
+
+The laziness in our approach is that if the \emph{aligned} size of the write required to safely insert the node into the index exceeds 128-bits, then we refrain from maintaining the Robin Hood invariants at all, for we would need to employ more than one atomic writes in order to store the newly inserted key.
+This is because we cannot use the hardware~\cite[CMPXCHG--Compare and Exchange]{x86-64} instruction over more than 16-bytes.
+The instruction further requires that the write be 16-byte aligned, or else a segmentation fault is encountered.\footnote{%
+	Other faults may be encountered as well, depending on the architecture, for instance in aarch64 ISAs (which are not currently supported; see~\S\ref{subsec:compatibility-with-other-isas}) a bus fault is encountered.
+}
+Thus, e.g.\ if a new node is inserted into the index after a 16-byte boundary, the insertion cannot be performed with a normal (i.e.\ compact) node.
+
+That is, when the distance cannot be stored in $O(\log \log n)$ space, we semantically say the distance is $\infty$ and store it as $\log \log n - 1$ (we may later refer to this as the maximum distance for a given size of the table, or simply as the maximum distance).
+When a node has distance equals to the maximum distance, we say that node is a non-compact node.
+We also employ non-compact nodes to denote tombstones.
+As is well known, see for instance~\cite[\S6.4]{the-art-vol-2}, ``the obvious way of deleting records from a hash table doesn't work.''
+Instead of simply removing a node, we swap it for a tombstone node, which is a non-compact node pointing to entry number 0 of the data table.
+The data table maintains the invariant that the key and value fields of that entry are always \texttt{NULL}.\footnote{%
+	This is achieved by requiring at initialization time that the thread creating the \texttt{AtomicDict} instance reserves entry number 0 for itself, and marks it as already occupied, without writing anything into it.
+	Thus, all data tables have at least one unused entry.
+	Furthermore, if the thread that created the hash table never writes into it, there will always be $|R|$ unused entries, with $|R|$ being the size of the reservation buffer.
+	For more details on reservations see \S\ref{subsec:reservation-buffers}.
+}
+Operations that read the index, simply always skip non-compact nodes that point to entry 0.
+Further details on tombstone nodes and deletes are given in \S\ref{sec:delete}.
+
+When a new node could be inserted, respecting the requirements for our lazy robin hood, but it should be inserted at a distance greater then the maximum, we initiate a grow migration, as described in~\S\ref{sec:migrations}.
+In effect, we have a local trigger for our migrations that doesn't require global knowledge of the table.
+We can observe the local effect of collisions to determine that the table size is too small, and take action accordingly.
+This is not the only trigger for migrations, for a complete list refer to the relevant section.
+One may argue that a degenerate set of hashes can continuously trigger migrations.
+While this is true in principle, recall that we essentially make use of double-hashing (see above~\S\ref{subsec:maier}): we use the Python hash to compute the CRC32 hash, making such a set of keys very hard to find.
+In the future, we may additionally provide a configurable setting that inhibits this behavior and makes the insertion fallback to non-compact node insertion.
+
+
+\section{Lookup}\label{sec:lookup}
 
 \lstinputlisting[
 	numbers=left,
@@ -60,7 +254,7 @@ Thus, the required property of hashes being ``\emph{large} pseudo-random numbers
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
-\section{Insert or update}
+\section{Insert or update}\label{sec:insert-or-update}
 
 \lstinputlisting[
 	numbers=left,
@@ -75,9 +269,9 @@ The InsertOrUpdate (or rather, ExpectedInsertOrUpdate) routine departs from Maie
 If the expected value was not the stored value (or the compare and set low-level call failed and the newly read value then differed from the expected one), then a special EXPECTATION\_FAILED object is returned.
 
 There's also another special value called ANY that can be used as the expected value to signify that whatever the current value is, even an absent value, it should be replaced with the desired value.
-The three special objects ANY, NOT\_FOUND, and EXPECTATION\_FAILED cannot be used as keys or values in AtomicDict, so as to guarantee thei semantics are consistent (cf. EXPECTATION\_FAILED being a value returned by this routine.)
+The three special objects ANY, NOT\_FOUND, and EXPECTATION\_FAILED cannot be used as keys or values in AtomicDict, so as to guarantee their semantics are consistent (cf.\ EXPECTATION\_FAILED being a value returned by this routine.)
 
-If the expected value is either ANy or NOT\_FOUND, there is an insertion fast-path used in which the $d_0$ element in the index is CASed with the entry reserved without going through the currently stored data in the index.
+If the expected value is either ANY or NOT\_FOUND, there is an insertion fast-path used in which the $d_0$ element in the index is CASed with the entry reserved without going through the currently stored data in the index.
 If this CAS succeeds, then the operation is completed.
 If it doesn't the general code path is followed.
 Notice that this doesn't compromise correctness: if the $d_0$ node was in fact empty, it means that the key wasn't in the dictionary.
@@ -85,7 +279,7 @@ Notice that this doesn't compromise correctness: if the $d_0$ node was in fact e
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
-\section{Delete}
+\section{Delete}\label{sec:delete}
 
 \lstinputlisting[
 	numbers=left,
@@ -99,19 +293,22 @@ Notice that this doesn't compromise correctness: if the $d_0$ node was in fact e
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
-\section{Migrations: growth, shrinking, and compaction}
+\section{Migrations: growth, shrinking, and compaction}\label{sec:migrations}
+
 \subsection{Linearization}
 \subsection{Non-lock-freedom}
 
-\section{Approximate size}
+\section{Approximate size}\label{sec:approximate-size}
+
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
-\section{Consistent size}
+\section{Consistent size}\label{sec:consistent-size}
+
 \subsection{Linearization}
 \subsection{Non-lock-freedom}
 
-\section{Batch lookup}
+\section{Batch lookup}\label{sec:batch-lookup}
 
 Inspired by the design of DRAM-HiT, this method was added so as to amortize the cost of multiple memory accesses when a program wants to read a number of keys from the hash table.
 It deviates from~\cite{dramhit} in that it does not require the user to continuously poll the table for results.
@@ -122,14 +319,14 @@ An example call:
 \begin{lstlisting}[language=Python]
 foo = AtomicDict({'a': 1, 'b': 2, 'c': 3})
 result = foo.batch_getitem({
-	'a': None,
-	'b': None,
-	'f': None,
+  'a': None,
+  'b': None,
+  'f': None,
 })
 assert result == {
-	'a': 1,
-	'b': 2,
-	'f': <cereggii.NOT_FOUND>,
+  'a': 1,
+  'b': 2,
+  'f': cereggii.NOT_FOUND,
 }
 \end{lstlisting}
 
@@ -163,17 +360,34 @@ Therefore, it is possible for a result of this method to not be sequentially con
 
 \subsection{Lock-freedom}
 
-\section{Aggregate}
+\section{Aggregate}\label{sec:aggregate}
+
+\subsection{Reduce}\label{subsec:reduce}
+
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
-\section{Partitioned iterations}
+\section{Iterations}\label{sec:partitioned-iterations}
+
+\subsection{Iteration Partitioning}\label{subsec:iteration-partitioning}
+
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
-\section{Proposal for a consistent iteration}
+\section{Proposal for a consistent iteration}\label{sec:consistent-iteration}
 
-(in spite of concurrent mutations)
+When a thread iterates over the hash table with the iterator described above in \S\ref{sec:partitioned-iterations}, it may encounter sequentially inconsistent behaviors, if other threads are concurrently mutating the table.
+For instance:
+\begin{enumerate}
+	\item the same key is emitted more than once; or
+	\item an update $u_1$ that happened strictly before another $u_2$ is not seen, while the latter is.\footnote{%
+		Such is the case when two updates are executed in succession by the same thread.
+		Thus, it is definitely known that $u_1 \rightarrow u_2$.
+	}
+\end{enumerate}
+
+These may be very surprising behaviors for a programmer trying to debug an incorrect execution of an iterating thread.
+The necessity for a sequentially consistent iterator lies therein.
 
 \subsection{Linearization}
 \subsection{Non-lock-freedom}
