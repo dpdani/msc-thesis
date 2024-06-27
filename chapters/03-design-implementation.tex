@@ -8,18 +8,19 @@ $O(t)$
 
 $\textrm{atw} \textrm{rgw} \textrm{rgr}$
 
-\section{Design overview}\label{sec:design-overview}
+\section{Design Overview}\label{sec:design-overview}
 
-\subsection{Python's dictionary}\label{subsec:python-dict}
+
+\subsection{Python's Dictionary}\label{subsec:python-dict}
 
 A lot of the basis for \texttt{AtomicDict} has been inspired from Python's \texttt{dict}.
 Namely, that the hash table itself is instead an index over another table called the data table.
 In the latter is where the pointers to the keys and values objects reside.
 
 This improves on both the storage space and the iteration speed.
-In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be \~$(1 - F_r)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
-Instead, there will be \~$1 - F_r$ empty $O(8)$-bytes slots in the index, while the keys and value pairs will be stored in a separate compact table.
-That is, the data table will have a fill ratio of \~100\%.
+In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $\sim(1 - F_r)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
+Instead, there will be $\sim1 - F_r$ empty $O(8)$-bytes slots in the index, while the keys and value pairs will be stored in a separate compact table.
+That is, the data table will have a fill ratio of $\sim$100\%.
 Thus, when iterating over the keys in the dictionary, the compact data table will serve as the basis for the iteration, instead of the sparse index.
 Also, note that the size of index nodes will vary depending on the size of the key set: when the key set is small there is no need to index the data table with 64-bit numbers, instead the size of nodes is chosen dynamically, from a lower bound of 1-byte, when the cardinality of the key set is $\leq 64$.
 As the set of keys becomes larger than the maximum allowed fill ratio,\footnote{%
@@ -51,33 +52,81 @@ The tag contains a portion of the hash of the key in the data table, when the ta
 This reduces the cost of having split index and data tables.
 
 
-\subsection{Maier's}\label{subsec:maier}
+\subsection{Concurrent Hash Table Design of Maier et al.}\label{subsec:maier}
+
+Another substantial source of inspiration for \texttt{AtomicDict} is to be found in~\cite{maier}.
+The core of the migration routine described later in~\S\ref{sec:migrations} is essentially the same as the one described in~\cite[\S5.3]{maier}.
+In that work, Maier and his colleagues describe a table migration process that crucially eliminates most of the contention that can in principle arise from a migration.
+In contrast with the standard literature, see for instance~\cite[Figure~13.30]{art-mp}, the migration process described does not necessitate the acquisition of one or multiple locks by a single thread that then takes care of performing the resizing.
+In fact, in the entire~\cite[Chapter~13]{art-mp}, resizing (eq.\ migrating) is described only in terms of a ``stop-the-world'' operation.
+
+That a fully lock-free migration process is possible has been shown by Hesselink et al.\ in~\cite[\S3.5]{hesselink}.
+Notwithstanding the theoretical achievement, the practicality of such an approach can be subject to debate.
+A migration process, as described in~\cite{hesselink}, comprises $\Omega(n)$ atomic memory writes (CAS).
+Since an atomic write can be considered to be an order of magnitude more expensive than a normal write,\footnote{%
+	For instance Intel SkyLake's \texttt{lock cmpxchg8b} has a measured latency of 23 clock cycles, while a \texttt{mov} instruction from a register to memory has a latency of 2 cycles.
+	See~\cite[Intel Ice Lake and Tiger Lake]{x86-instruction-tables}.
+} it is easy to see how the cost of migrations quickly becomes unsustainable, as noted in~\cite{maier} as well:
+
+\begin{quote}
+	While [\ldots] lock-free dynamic linear probing hash tables are possible, there is no result on their practical feasibility.
+	Our focus is geared more toward engineering the fastest migration possible; therefore, we are fine with small amounts of locking, as long as it improves the overall performance.
+\end{quote}
+
+\texttt{AtomicDict} also follows the same philosophy.
+It is clear that the cost of hardware primitives that implement compare-and-set memory semantics is very high when contrasted with the normal memory access primitives, thus they should be used sparingly.
+When mutual exclusion helps to simplify the algorithm and its running time, it should be used.
+
+We therefore maintain, like~\cite{maier}, that:
+
+\begin{quote}
+	[\ldots] The hash table works lock-free as long as no migration is triggered.
+	% Once a migration is triggered, it is not lock-free but it happens asynchronously and it is hidden from any user of the hash table.
+\end{quote}
+
+Let us extend this concept by including other operations as well.
+We will collectively refer to migrations and other kinds of operations that break the lock-freedom of the hash table as \emph{synchronous operations}, described later in~\S\ref{subsec:synchronous-operations}.
+The essential characteristic is that their implementation may be greatly simplified by not allowing concurrent lock-free access; both from the perspective of computational costs, or maintenance costs.
 
 Maier's hashmap implementation has an important difference when compared with Python's dictionary.
 In the latter, the least-significant bits of the hash are used to determine the position in the linear array; that is, $d_0(x) = x \mod 2^s$, with $s$ being the logarithm base-2 of the dictionary size.
-While in the former, the most-significant bits are used: $d_0 = x \gg (64 - s)$, where $\gg$ is a right-shift operation.
+While in the former, the most-significant bits are used: $d_0(x) = x \gg (64 - s)$, where $\gg$ is a right-shift operation.
 
-An extensive reasoning as to why Python's hashmap chose this scheme can be found in~\cite{dict-comment-hash}.
-While the reason why Maier chose the right-shift based scheme is so that the relative position of two keys which are in the same probe doesn't change as much as in the alternative, when the array is resized.
-That is, consider a key $x$ s.t. $h(x) \mathbin{\&} 2^{s+1} = 0$, and a key $y$ s.t. $h(x) \mathbin{\&} 2^{s+1} = 1$.
-If they were colliding before resizing from $s$ to $s+1$(i.e. $h(x) \mathbin{\&} 2^s-1 = h(y) \mathbin{\&} 2^s-1$), they will not collide in the corresponding hashmap of size $s+1$.
+A reasoning as to why Python's hashmap chose this scheme can be found in~\cite{dict-comment-hash}:
+\begin{quote}
+	In a table of size $2^i$, taking the low-order i bits as the initial table index is extremely fast, and there
+	are no collisions at all for dicts indexed by a contiguous range of ints.
+	So this gives better-than-random behavior in common cases, and that's very desirable.
+\end{quote}
+On the other hand, the reason why Maier chose the right-shift based scheme is so that the relative position of two keys which are in the same probe doesn't change as much as in the alternative, when the array is resized.
+That is, consider a key $x$ s.t. $h(x) \mathbin{\&} 2^{s + 1} = 0$, and a key $y$ s.t. $h(x) \mathbin{\&} 2^{s + 1} = 1$.
+If they were colliding before resizing from $s$ to $s + 1$ (i.e. $h(x) \mathbin{\&} 2^s - 1 = h(y) \mathbin{\&} 2^s - 1$), they will not collide in the corresponding hashmap of size $s + 1$.
 But this creates an unexpected problem.
-It is trivial to see that $d_0(x)' = d_0(x)$.
-The $d_0$ position of $y$ will have changed from $d_0(y) = h(y) \mathbin{\&} 2^s-1$ to $d_0(y)' = h(y) \mathbin{\&} 2^{s+1}-1$.
-In other words, $d_0(y)' = d_0(y) + 2^s$.
+It is trivial to see that the distance-0 after the migration $d_0'(x) = d_0(x)$.
+The $d_0$ position of $y$ will have changed from $d_0(y) = h(y) \mathbin{\&} 2^s-1$ to $d_0'(y) = h(y) \mathbin{\&} 2^{s+1}-1$.
+In other words, $d_0'(y) = d_0(y) + 2^s$.
 
 The problem with this behavior is that the position in the new array cannot be safely determined by looking at the prior array, without reading the actual hashes of each key in a probe.
 
-This problem is avoided by choosing the most-significant bits scheme: $d_0(y) = h(y) \gg (64 - s)$, and $d_0(y)' = h(y) \gg (64 - s - 1)$.
-In other words, $d_0(y)' = d_0(y) \cdot 2 + 1$.
-While $d_0(x) = h(x) \gg (64 - s)$, and $d_0(x)' = h(x) \gg (64 - s - 1) \Rightarrow d_0(x)' = d_0(x) \cdot 2$.
+This problem is avoided by choosing the most-significant bits scheme: $d_0(y) = h(y) \gg (64 - s)$, and $d_0'(y) = h(y) \gg (64 - s - 1)$.
+In other words, $d_0'(y) = d_0(y) \cdot 2 + 1$.
+While $d_0(x) = h(x) \gg (64 - s)$, and $d_0'(x) = h(x) \gg (64 - s - 1) \Rightarrow d_0'(x) = d_0(x) \cdot 2$.
 
 It follows that the nodes of a cluster in the prior array will ``stay close to each other'' in the new array.
 This behavior enables avoiding the necessity to exercise care in the moving of nodes from one generation of the hashmap to the next, resulting in much less synchronization overhead.
 
-Though, given this fundamental difference in picking the hash bits that determine the position in the hashmap, it was necessary to re-hash Python-generated hashes, or else the $d_0$ position of very many objects would be $0$.
+Though, given this fundamental difference in picking the hash bits to determine the position in the hashmap, it was necessary to re-hash Python-generated hashes, or else the $d_0$ position of very many objects would be $0$.
 This is done with a cheap CRC32 hardware instruction, that Maier also used in his implementation.
 Thus, the required property of hashes being ``\emph{large} pseudo-random numbers,'' is respected.
+
+As with regards to the different strategies that Maier et al.\ lay out to ``hide the migration from the underlying application,'' it was chosen to only implement the ``Recruiting User-Threads (u),'' strategy and not ``Using a Dedicated Thread Pool (p)''; and the ``Preventing Concurrent Updates to Ensure Consistency (s--semi-synchronized)'' strategy and not ``Marking Moved Elements for Consistency (a--asynchronous)''.
+This decision came down to two considerations:
+\begin{itemize}
+	\item it would be surprising for the programmer to find out that a thread pool gets created at each instantiation of a hash table, and it would also not be much more performant according to~\cite[\S8.4, Using Dedicated Growing Threads]{maier}; and
+	\item the semi-synchronized strategy seems easier to implement (and to explain), while also being more performant on average, according to Maier's own measurements.
+\end{itemize}
+Thus, in the following Section~\ref{sec:migrations}, we only present what Maier refers to as the \emph{usGrow} variant.
+
 
 \subsection{Reservation Buffers}\label{subsec:reservation-buffers}
 
@@ -100,6 +149,7 @@ In order to amortize the cost of having a data table separate from the actual ha
 When a thread has no available reservations, it resolves to finding a free entry based on the key's hash as described before, reserving four entries; instead when a thread has reservations at disposal, it directly writes into the free entries that it owns, using regular (non-atomic) writes.
 
 In summary, the expected number of atomic writes per inserted key is $1 + 1/4 = 1.25$.
+
 
 \subsection{Accessor Storage}\label{subsec:accessor-storage}
 
@@ -127,7 +177,7 @@ That also entails that the entries in the reservation buffers need to be changed
 
 \subsection{Synchronous Operations}\label{subsec:synchronous-operations}
 
-In abstract terms, the presence of the list of thread-local mutexes enables the creation of cuts in the execution of dictionary operations, whereas the acquisition of all the thread-local mutexes by one thread creates a distinction between the operations that happened before this circumstance and those that happened after it.
+In abstract terms, the presence of the list of thread-local mutexes, described in the above Section, enables the creation of cuts in the execution of dictionary operations, inasmuch the acquisition of all the thread-local mutexes by one thread creates a distinction between the operations that happened before this circumstance and those that happened after it.
 
 This crucial characteristic, which is required e.g.\ for the re-ordering of data table entries, enables also many more usages.
 A few are described in the following sections.
@@ -138,6 +188,11 @@ For instance, the hash table migration enjoys the help of more than one thread, 
 
 The addition of this mechanism ensures that the dictionary presented here is capable both of performant lock-free operations, and of complex operations that require the exclusive access to the entire dictionary in order to be performed without a prohibitive number of expensive atomic memory writes.
 The properties that a synchronous operation is sequential and ensured to be mutually exclusive w.r.t.\ all other threads, make it also very simple to be explained and understood, an important characteristic for collaborative development.
+
+Do note that the presence of a synchronous operation does not impede the fulfillment of concurrent lookup operations, as also described in the relevant later sections.
+The meaning is that for concurrent migrations, the lookup linearizes on the state of the hash table prior to the migration (the thread performing the lookup will not be participating in the migration process).
+For other arbitrary synchronous operations, in principle this behavior may not be acceptable; nevertheless, for those considered so far, it is indeed acceptable.
+This exemption of lookups from the participation in migrations follows along the lines of~\cite[\S5.3.2, Preventing Concurrent Updates to Ensure Consistency]{maier}, i.e.\ only mutations are prevented, read-only operations are allowed to proceed on the prior state of the hash table.
 
 
 \subsection{Lazy Robin-Hood}\label{subsec:lazy-robin-hood}
@@ -183,7 +238,7 @@ As you can observe the proposed hash table has definite minimum and maximum size
 		30 & 64 & 5 & 29 & 56 & 64 & 6 & 2 \\
 		31 & 64 & 5 & 28 & \\
 	\end{tabular}
-	\caption{Sizes of internal fields of nodes in the index hash table. Let $n$ be the capacity of the table, and \emph{Node}, \emph{Distance}, and \emph{Tag} refer to their sizes, expressed in number of bits.}
+	\caption{Sizes of internal fields of nodes in the index hash table. Let $n$ be the capacity of the table, and \emph{Node}, \emph{Distance}, and \emph{Tag} refer to their respective sizes, expressed in number of bits.}
 	\label{tab:robin-hood-nodes}
 \end{table}
 
@@ -236,8 +291,8 @@ In effect, we have a local trigger for our migrations that doesn't require globa
 We can observe the local effect of collisions to determine that the table size is too small, and take action accordingly.
 This is not the only trigger for migrations, for a complete list refer to the relevant section.
 One may argue that a degenerate set of hashes can continuously trigger migrations.
-While this is true in principle, recall that we essentially make use of double-hashing (see above~\S\ref{subsec:maier}): we use the Python hash to compute the CRC32 hash, making such a set of keys very hard to find.
-In the future, we may additionally provide a configurable setting that inhibits this behavior and makes the insertion fallback to non-compact node insertion.
+While this is true in principle, do observe an implication of Table~\ref{tab:robin-hood-nodes}: starting from a table capacity of $2^9 = 512$, the maximum distance is 16, while the number of nodes in a 16-byte-aligned region of memory (a quad word), is 8.
+Therefore, the described mechanism effectively cannot be triggered indefinitely.
 
 
 \section{Lookup}\label{sec:lookup}
@@ -254,7 +309,7 @@ In the future, we may additionally provide a configurable setting that inhibits 
 \subsection{Linearization}
 \subsection{Lock-freedom}
 
-\section{Insert or update}\label{sec:insert-or-update}
+\section{Insert or Update}\label{sec:insert-or-update}
 
 \lstinputlisting[
 	numbers=left,
@@ -265,7 +320,7 @@ In the future, we may additionally provide a configurable setting that inhibits 
 	label={lst:insert}
 ]{listings/insert.c}
 
-The InsertOrUpdate (or rather, ExpectedInsertOrUpdate) routine departs from Maier's design in that it doesn't expect the user to providde an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special NOT\_FOUND object for a successful insertion, in which case either NOT\_FOUND ot ANY were the expected value.)
+The ExpectedInsertOrUpdate routine departs from Maier's design (\S\cite[Algorithm~1]{maier}) in that it doesn't expect the user to provide an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special NOT\_FOUND object for a successful insertion, in which case either NOT\_FOUND or ANY were the expected value.)
 If the expected value was not the stored value (or the compare and set low-level call failed and the newly read value then differed from the expected one), then a special EXPECTATION\_FAILED object is returned.
 
 There's also another special value called ANY that can be used as the expected value to signify that whatever the current value is, even an absent value, it should be replaced with the desired value.
@@ -330,7 +385,8 @@ assert result == {
 }
 \end{lstlisting}
 
-The \texttt{<cereggii.NOT\_FOUND>} object is a special, global object that cannot be inserted into \texttt{AtomicDict}.
+The \texttt{cereggii.NOT\_FOUND} object is a special, global object that cannot be inserted into \texttt{AtomicDict}.
+The fact that it is in the output means, as its name implies, that the key was not in the dictionary.
 
 The operation involves the prefetching of each distance-0 location of the keys in the batch.
 This results in an amortization of the cost of individual memory accesses: if the number of prefetches issued is sufficiently large (how large depends on the hardware), then the processor will be stalled waiting for the first read, while the subsequent ones will be read from the cache without incurring in the cost of main memory access.
@@ -346,6 +402,12 @@ Thus, a thread accessing the index will either only issue operations to remote m
 	Mimicking the design of DRAM-HiT, the user thread would submit requests to a message queue which is consumed by the threads associated with a shard.
 	The design need not be asynchronous as in \cite{dramhit} to gain the speed-up of stronger memory associativity. XXX check this
 }
+NUMA support is thus limited: the presence of a single shared index makes it impossible to efficiently make use of the memory partitioning.
+
+Further work may be carried out so as to provide an \texttt{AtomicShardedDict} class which creates its own pool of threads, bound to individual NUMA nodes, and affords access to the hash table shards to those threads only.
+This is resembling of the design of~\cite{dramhit}.
+It can be implemented by making use of the current implementation for \texttt{AtomicDict}, such that one shard of \texttt{AtomicShardedDict} is an instance of \texttt{AtomicDict}.
+Individual keys may be uniquely assigned to a shard based on their hash.
 
 The batch is subdivided into chunks of a configurable size.
 This is intended to prevent the over-fetching of memory.

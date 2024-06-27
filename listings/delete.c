@@ -4,6 +4,7 @@ int Delete(meta, key, hash)
   //   - meta, key != NULL
   //   - key \not\in {NOT_FOUND, ANY, EXPECTATION_FAILED}
 
+beginning:
   result = Lookup(meta, key, hash)
 
   if (result.error) {
@@ -18,7 +19,7 @@ int Delete(meta, key, hash)
     ReadEntry(result.entry_p, &result.entry);
 
     if (result.entry.value == NULL) {
-      goto not_found;
+      goto beginning;
     }
   }
 
