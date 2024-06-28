@@ -1,12 +1,17 @@
 \chapter{Proposed Design and Implementation}\label{ch:design-and-implementation}
 
-The implementation is available online at~\cite{cereggii}.
+The implementation is available online at~\cite[src/cereggii/atomic\_dict]{cereggii}, and comprises 12 C source files, with Python bindings, and 29 test cases (written in Python code).
 
 \cite{peniocereus-greggii}
 
 $O(t)$
 
 $\textrm{atw} \textrm{rgw} \textrm{rgr}$
+
+The bindings to the Python runtime are considered an implementation detail, and are not discussed here.
+They chiefly consist of mapping Python objects into C constructs, which is achieved with calls to Python's C-APIs.
+Another feature of Python's C-APIs that has been extensively used is garbage collection, which is discussed in \S\ref{sec:garbage-collection}.
+
 
 \section{Design Overview}\label{sec:design-overview}
 
@@ -18,7 +23,7 @@ Namely, that the hash table itself is instead an index over another table called
 In the latter is where the pointers to the keys and values objects reside.
 
 This improves on both the storage space and the iteration speed.
-In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $\sim(1 - F_r)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
+In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $\sim\(1 - F_r\)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
 Instead, there will be $\sim1 - F_r$ empty $O(8)$-bytes slots in the index, while the keys and value pairs will be stored in a separate compact table.
 That is, the data table will have a fill ratio of $\sim$100\%.
 Thus, when iterating over the keys in the dictionary, the compact data table will serve as the basis for the iteration, instead of the sparse index.
@@ -295,7 +300,61 @@ While this is true in principle, do observe an implication of Table~\ref{tab:rob
 Therefore, the described mechanism effectively cannot be triggered indefinitely.
 
 
+\subsection{Garbage Collection}\label{subsec:garbage-collection}
+
+As Micheal Maged put it in~\cite[\S2.3]{micheal-hash-tables}:
+\begin{quote}
+	[\ldots] The failure or delay of the garbage collector may prevent threads operating on lock-free objects from making progress indefinitely, thus violating lock-freedom.
+\end{quote}
+
+Such is undeniably correct, and therefore, the proposed implementation for \texttt{AtomicDict} cannot be considered lock-free, simply by virtue of the fact that its memory is managed through Python's garbage collector.
+Notwithstanding, this was a deliberate implementation detail and not a foundational piece in the design of \texttt{AtomicDict}.
+The fact that its internal data structures are traced with Python's GC is something that can be easily changed without compromising the design.
+The choice was chiefly to simplify the implementation of \texttt{AtomicDict}.
+Furthermore, given the fact that the hash table access was subject to the interpretation of Python code by the CPython interpreter, as that was the target for the presented work, there was no possibility of not having to deal with a stop-the-world GC\@.
+
+Python code is not the only means through which \texttt{AtomicDict}'s APIs can be accessed.
+The library also exposes C header files.\footnote{%
+	Though, their standalone usage has not yet been explored.
+}
+For those use-cases that don't employ Python code, but rather directly call \texttt{AtomicDict}'s C functions, true lock-freedom can be of interest.
+
+Changing the implementation to not be based on the provided GC, but instead using a dedicated memory management system, is entirely possible; albeit requiring a lot of additional work.
+One way this can be achieved is by implementing what Micheal himself describes in~\cite{micheal-safe-reclamation} which employs so-called \emph{hazard pointers}; or any other suitable algorithm.
+
+Serious effort was not put into looking at this possible implementation change, as of the time of writing.
+
+
 \section{Lookup}\label{sec:lookup}
+
+The proposed lookup design is what could probably be expected given the discussed design of the hash table.
+The operation begins by computing the $d_0$ index slot, based on the pre-computed hash, by calling the \texttt{Distance0Of} function, which internally re-hashes the Python-generated hash,\footnote{%
+	The hash computation is deliberately omitted here, because it essentially only entails making the correct call to the relevant Python C-API, and checking for possible errors.
+} as described in~\ref{subsec:maier}, and then computes the slot position, based on the size of the hash table, listed in the \texttt{meta} object.
+
+A fairly complete C-like pseudocode of its implementation is reported in Listing~\ref{lst:lookup}.
+
+The algorithm then looks up the index for the searched element, starting from position $d_0$, until either:
+\begin{enumerate}
+	\item the item is found;
+	\item an empty slot is found (the only probe in which the item could be found was looked at in its entirety);
+	\item the hash table is in a compact state (i.e.\ no non-compact nodes are in the index) and the search can be pruned due to the Robin Hood invariant (i.e.\ the distance of the read node is greater than what the distance of the searched node would be if it was to be found); or
+	\item the probe distance is equal to the index size.
+\end{enumerate}
+
+The searched key can be found if there is a node in the index whose tag corresponds to the key's hash, the node points to an entry other than 0, the entry's value is not \texttt{NULL}, the stored (Python-generated) hash is not different from the key's hash, and either the pointers of the searched key and the stored key are the same (identity), or the keys are semantically equal, based on the arbitrary logic with which those two Python objects may be deemed equal.
+
+It can be seen that in lines 38--55, care is taken in order to delay the call to the comparison function as much as possible.
+This is because comparison between arbitrary Python objects can be very computationally expensive.
+Since the involved object's types may be implemented in Python code, it often requires interpreting an arbitrary Python function.
+Such function does not have any restrictions on its computational complexity, and even if it was enforced to be an $O(1)$ operation (as it would be normally expected), its constant factor would still be very high, due to interpretation overhead.
+The comparison itself may also raise an exception, either if the two objects' types are not comparable, or if the arbitrary Python code that was executed to compare the two objects raised an exception for any reason.
+For the sake of discussing the running time complexity of our routine, we will make the (very possibly wrong) assumption that the cost of calling the Python C-API is always $O(1)$, regardless of the types of the two objects.\footnote{%
+	Comparisons in Python are notoriously costly.
+	As is well known, Timsort was implemented specifically for Python, with the explicit goal of minimizing the amount of comparisons as much as possible.
+
+	Also note that in Listing~\ref{lst:lookup}, the called pseudo-function is not the actual function, but an abstraction that eases discussion, without really impacting it.
+}
 
 \lstinputlisting[
 	numbers=left,
@@ -306,8 +365,42 @@ Therefore, the described mechanism effectively cannot be triggered indefinitely.
 	label={lst:lookup}
 ]{listings/lookup.c}
 
-\subsection{Linearization}
-\subsection{Lock-freedom}
+\subsection{Linearization}\label{subsec:lookup-linearization}
+
+Towards the end of Listing~\ref{lst:lookup}, at lines 68--94, is where the response is written into an externally allocated C \texttt{struct}.
+See how on line 69 the eventuality that the compact state of the hash table has changed is taken into account.
+Suppose the check on line 69 didn't exist, and consider two threads $t_1$ and $t_2$ executing respectively a lookup for key $k$ and an insert for the same key.
+There can exist an execution s.t.:
+\begin{enumerate}
+	\item $t_1$ runs first and reaches line 8, reading that \texttt{is\_compact} $= \top$;
+	\item $t_2$ runs from start to end, turning \texttt{{meta->is\_compact}} $= \bot$, and inserting $k$ with a non-compact node; and
+	\item $t_1$ runs again, not finding the node pertaining to $k$, thus returning a lookup failure.
+\end{enumerate}
+
+Instead of this evidently faulty behavior, the check on line 69 makes the lookup restart from the beginning, so that item (3) above would be substituted ``$t_1$ at first not finding $k$, sees that a non-compact insertion could have linearized, undermining its assumption that the Robin Hood invariant holds, and thus restarts from line 7, eventually finding $k$.''
+
+Another similar check can be found on lines 72 and 79, where concurrent migrations are considered.
+It is important to note that lookups are permitted to run concurrently with migrations, as they are read-only operations.
+When a concurrent migration from the generation of \texttt{meta} to a newer generation has been linearized (setting this metadata's \texttt{{migration\_done}} flag to $\top$)\footnote{%
+	This is actually implemented with an atomic event, so that threads that are waiting for the migration to finish are awaken.
+} it is possible that a subsequent insert (potentially the one that initiated the migration) for the same key as the lookup operation linearizes before the lookup operation completes, in a manner similar to the previously discussed compactness of the hash table.
+In this case, the $d_0$ position of the key must also be recomputed.
+
+Other than the two cases described, the successful lookup linearizes on line 41, where the key is read.
+Failed lookups, i.e.\ lookups that don't find the searched key, linearize on line 15, where a node is read from the index.
+
+
+\paragraph{Lock-freedom.}
+
+It is trivial to see that no thread's arbitrary delay can induce this lookup to also be subjected to an arbitrary delay, insofar as the code presented is concerned.
+
+It is true that there is one aspect that evades the control of the author, namely the equality comparison.
+It can indeed be that the arbitrary code that is run also comprises a lock acquisition.
+Lock-freedom of that relevant code can in no way be evinced, nor enforced.
+Therefore, we can only run the assumption\footnote{%
+	Or rather, the hope.
+} that the arbitrary code is sane and does not exhibit such surprising behavior.
+
 
 \section{Insert or Update}\label{sec:insert-or-update}
 

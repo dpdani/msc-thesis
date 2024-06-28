@@ -76,9 +76,33 @@
 
 @online{pep703,
 	author = {Gross, Sam},
-	title = {PEP 703 – Making the Global Interpreter Lock Optional in CPython},
+	title = {PEP 703 -- Making the Global Interpreter Lock Optional in CPython},
 	date = {2023-05-04},
 	url = {https://peps.python.org/pep-0703/},
+	urldate = today,
+}
+
+@online{pep554,
+	author = {Snow, Eric},
+	title = {PEP 554 -- Multiple Interpreters in the Stdlib},
+	date = {2017-09-07},
+	url = {https://peps.python.org/pep-0554/},
+	urldate = today,
+}
+
+@online{pep734,
+	author = {Snow, Eric},
+	title = {PEP 734 -- Multiple Interpreters in the Stdlib},
+	date = {2023-11-06},
+	url = {https://peps.python.org/pep-0734/},
+	urldate = today,
+}
+
+@online{pep684,
+	author = {Snow, Eric},
+	title = {PEP 684 -- A Per-Interpreter GIL},
+	date = {2022-03-08},
+	url = {https://peps.python.org/pep-0684/},
 	urldate = today,
 }
 
@@ -257,4 +281,38 @@
 	institution = {Technical University of Denmark},
 	url = {https://www.agner.org/optimize/#manuals},
 	urldate = today,
+}
+
+@inproceedings{micheal-hash-tables,
+	author = {Michael, Maged M.},
+	title = {High performance dynamic lock-free hash tables and list-based sets},
+	year = {2002},
+	isbn = {1581135297},
+	publisher = {Association for Computing Machinery},
+	address = {New York, NY, USA},
+	url = {https://doi.org/10.1145/564870.564881},
+	doi = {10.1145/564870.564881},
+	abstract = {Lock-free (non-blocking) shared data structures promise more robust performance and reliability than conventional lock-based implementations. However, all prior lock-free algorithms for sets and hash tables suffer from serious drawbacks that prevent or limit their use in practice. These drawbacks include size inflexibility, dependence on atomic primitives not supported on any current processor architecture, and dependence on highly-inefficient or blocking memory management techniques.Building on the results of prior researchers, this paper presents the first CAS-based lock-free list-based set algorithm that is compatible with all lock-free memory management methods. We use it as a building block of an algorithm for lock-free hash tables. In addition to being lock-free, the new algorithm is dynamic, linearizable, and space-efficient.Our experimental results show that the new algorithm outperforms the best known lock-free as well as lock-based hash table implementations by significant margins, and indicate that it is the algorithm of choice for implementing shared hash tables.},
+	booktitle = {Proceedings of the Fourteenth Annual ACM Symposium on Parallel Algorithms and Architectures},
+	pages = {73–82},
+	numpages = {10},
+	location = {Winnipeg, Manitoba, Canada},
+	series = {SPAA '02}
+}
+
+@inproceedings{micheal-safe-reclamation,
+	author = {Michael, Maged M.},
+	title = {Safe memory reclamation for dynamic lock-free objects using atomic reads and writes},
+	year = {2002},
+	isbn = {1581134851},
+	publisher = {Association for Computing Machinery},
+	address = {New York, NY, USA},
+	url = {https://doi.org/10.1145/571825.571829},
+	doi = {10.1145/571825.571829},
+	abstract = {A major obstacle to the wide use of lock-free data structures, despite their many performance and reliability advantages, is the absence of a practical lock-free method for reclaiming the memory of dynamic nodes removed from dynamic lock-free objects for arbitrary reuse.The only prior lock-free memory reclamation method depends on the DCAS atomic primitive, which is not supported on any current processor architecture. Other memory management methods are blocking, require special operating system support, or do not allow arbitrary memory reuse.This paper presents the first lock-free memory management method for dynamic lock-free objects that allows arbitrary memory reuse, and does not require special operating system or hardware support. It guarantees an upper bound on the number of removed nodes not yet freed at any time, regardless of thread failures and delays. Furthermore, it is wait-free, it is only logarithmically contention-sensitive, and it uses only atomic reads and writes for its operations. In addition, it can be used to prevent the ABA problem for pointers to dynamic nodes in most algorithms, without requiring extra space per pointer or per node.},
+	booktitle = {Proceedings of the Twenty-First Annual Symposium on Principles of Distributed Computing},
+	pages = {21–30},
+	numpages = {10},
+	location = {Monterey, California},
+	series = {PODC '02}
 }

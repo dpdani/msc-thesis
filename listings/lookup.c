@@ -36,7 +36,7 @@ beginning:
     }
 
 check_entry:
-    if (node.tag == hash) {
+    if (node.location != 0 && node.tag == hash) {
       result->entry_p = GetEntryAt(node.location, meta);
       ReadEntry(result->entry_p. &result->entry);
 
@@ -44,12 +44,12 @@ check_entry:
         continue;
       }
 
-      if (result->entry.key == key) {  // identity
-        goto found;
-      }
-
       if (result->entry.hash != hash) {
         continue;
+      }
+
+      if (result->entry.key == key) {  // identity
+        goto found;
       }
 
       cmp = PyObject_Equals(result->entry.key, key);
@@ -69,15 +69,27 @@ not_found:
   if (is_compact != meta->is_compact) {
     goto beginning;
   }
+  if (meta->migration_done) {
+    goto repeat;
+  }
   result->error = false;
   result->found = false;
   return;
 found:
+  if (meta->migration_done) {
+    goto repeat;
+  }
   result->error = false;
   result->found = true;
   result->position = position;
   result->node = node;
   return;
+repeat:
+  this_gen = meta;
+  meta = meta->new_gen_metadata;
+  Decref(this_gen);
+  d_0 = Distance0Of(meta, hash);
+  goto beginning;
 error:
   result->error = true;
 }

@@ -18,9 +18,65 @@ Apart from the work already described in Chapter~\cite{ch:design-and-implementat
 
 \subsection{API Compatibility with built-in \texttt{dict}}\label{subsec:api-compatibility-with-dict}
 
+\subsection{\texttt{AtomicDictHandle}}\label{subsec:atomicdicthandle}
+
+A lot of the measured time involving \texttt{AtomicDict}'s methods pertains to concurrent reference counting.
+Such is because a lot of changes to the reference count are made when the CPython interpreter executes instructions that involve its object.
+For instance, every time a lookup, insertion, or etc.\ is performed, the Python interpreter increments, and later decrements, the reference count of the involved instance of \texttt{AtomicDict}.
+
+Considering the necessity to use atomic operations to perform the counting, the amount of time spent in that is great ($\sim$15\%--20\% in the benchmarks of Chapter~\ref{ch:measurements}).
+Instead of accessing the \texttt{AtomicDict} instance directly, though, it is possible to create a handle for it, like the one described in detail in Appendix~\ref{subsec:atomic-int-handles}.
+The handle being a thread-local object, not intended to be shared with other threads, enjoys the fast-path for reference counting; thus reducing the time spent doing reference counting to a negligible amount.
+
+
 \subsection{Compatibility with Sub-Interpreters}\label{subsec:compatibility-with-sub-interpreters}
 
-\subsection{\texttt{AtomicDictHandle}}\label{subsec:atomicdicthandle}
+Apart from the aforementioned incompatibility of a stop-the-world GC and lock-freedom discussed in~\S\ref{subsec:garbage-collection}, there is another consequence of using Python objects for the internal data structures of \texttt{AtomicDict}: that it cannot be used with sub-interpreters.
+Sub-interpreters are a fairly new technology (dating back to 2017), originally presented in PEP~554~\cite{pep554},\footnote{%
+    Later superseded by PEP~734~\cite{pep734}.
+} only accessible through C-level APIs.
+Creating sub-interpreters from Python code is not yet part of standard CPython distributions.
+
+Historically, since the GIL was deemed an intrinsic presence in the CPython interpreter, there have been various works to circumvent the limitation.
+Offloading the parallelizable computation to sub-processes, or custom C extensions are common workarounds to the GIL, as also noted by Gross in PEP~703~\cite{pep703}.
+Simplifying a lot of the relevant history, sub-interpreters were also designed with these problems in mind, and were recently enhanced to be endowed with a per-interpreter GIL in PEP~684~\cite{pep684}.
+Thus, several threads may have their own GIL, enabling them to run in parallel notwithstanding the continued presence of multiple global interpreter locks:
+\begin{quote}
+    [\ldots] Multiple interpreter support provide a novel concurrency model focused on isolated threads of execution.
+    Furthermore, they provide an opportunity for changes in CPython that will allow simultaneous use of multiple CPU cores (currently prevented by the GIL--see PEP~684).\footnote{See~\cite{pep554}.}
+\end{quote}
+
+This, at the expense of not being able to share access to objects between them.
+Inheriting some of their design from Communicating Sequential Processes (CSP), the general idea is that the threads in sub-interpreters exchange information through message-passing, rather than directly sharing memory.
+In fact, sharing \emph{objects} between interpreters is not allowed, except for immortal, immutable objects, e.g.\ \texttt{True}, \texttt{None}, etc.
+
+Nonetheless, there are mechanisms to share immutable, and only immutable, data between sub-interpreters.
+In~\cite[\S Queue Objects]{pep734}, there is described a sub-interpreters-compatible implementation of a queue, that can be used to pass \emph{shareable} objects from one interpreter to another.
+The list of \emph{shareable} objects is greater than that of immortal, immutable objects.
+It also comprises integers, byte arrays, floats, and, among others, a queue instance in itself.
+Conceptually, an object qualifies as shareable as long as it can be entirely represented by an immutable array of bytes.\footnote{%
+    This is not the actual requirement.
+    Instead, there is maintained a list of shareable object types in~\cite[\S Shareable Objects]{pep734}, which can be summarized with this concept.
+}
+
+Incidentally, an instance of a queue is entirely represented by its ID number.
+In order for a queue instance to be supported by sub-interpreters, its internal state cannot be represented into shared objects.
+A queue's memory thus is entirely allocated outside CPython's object space, and, upon allocation, a new queue is inserted into a shared, global list of queues.
+The ID of a queue is its position in the list of queues.
+Consequently, for a Python thread to access a queue, it is sufficient to know its ID, to then retrieve the queue from the list.
+The object created to interact with a queue from Python code only knows the ID of the queue, i.e.\ it just holds an integer; it therefore holds that it can be entirely represented by an array of bytes.
+
+This behavior should hold some resemblance with the \texttt{AtomicDictHandle} described above, whose primary purpose has nothing to do with sub-interpreters.
+It nonetheless can be used to hold an immutable, and thus potentially \emph{shareable}, representation of a dictionary: it can be entirely represented by an immutable pointer to the \texttt{AtomicDict} instance.
+In order for it to work, an additional requirement is that the \texttt{AtomicDict}'s internal data structures should not be Python objects, putting further interest into implementing a different memory management scheme, as already mentioned in~\S\ref{subsec:garbage-collection}.
+The instantiation of an \texttt{AtomicDict} would then always necessarily be followed by the instantiation of a handle to it.
+Given that the APIs of \texttt{AtomicDict} and \texttt{AtomicDictHandle} are equal by design, there wouldn't be much noticeable difference from the present situation.
+
+Supposing such is performed, more work needs to be carried out in order to ensure that the keys and values in \texttt{AtomicDict} are immutable, by also making use of XI object representations.
+Such restrictions should also \emph{only} be enforced for these particular use-cases, in order to not impose any restrictions on the keys and values to the use-cases not pertaining to sub-interpreters.
+
+With these enhancements, albeit quite a substantial amount of work in order to implement~\S\ref{subsec:garbage-collection}, it becomes entirely possible to make use of the same \texttt{AtomicDict} implementation in both concurrency models: common multi-threading with free-threading, and isolated multi-threading with sub-interpreters.
+
 
 \subsection{\texttt{AtomicCounter}}\label{subsec:atomiccounter}
 \S\ref{sec:atomicshardedintcounter}
