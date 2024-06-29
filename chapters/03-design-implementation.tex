@@ -23,8 +23,8 @@ Namely, that the hash table itself is instead an index over another table called
 In the latter is where the pointers to the keys and values objects reside.
 
 This improves on both the storage space and the iteration speed.
-In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $\sim\(1 - F_r\)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
-Instead, there will be $\sim1 - F_r$ empty $O(8)$-bytes slots in the index, while the keys and value pairs will be stored in a separate compact table.
+In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $\sim(1 - F_r)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
+Instead, there will be $\sim(1 - F_r)$ empty $O(8)$-bytes slots in the index, while the keys and value pairs will be stored in a separate compact table.
 That is, the data table will have a fill ratio of $\sim$100\%.
 Thus, when iterating over the keys in the dictionary, the compact data table will serve as the basis for the iteration, instead of the sparse index.
 Also, note that the size of index nodes will vary depending on the size of the key set: when the key set is small there is no need to index the data table with 64-bit numbers, instead the size of nodes is chosen dynamically, from a lower bound of 1-byte, when the cardinality of the key set is $\leq 64$.
@@ -34,16 +34,16 @@ As the set of keys becomes larger than the maximum allowed fill ratio,\footnote{
 The data table is only modified when it needs to be reduced after a large number of deletes, which are supposedly modest in number.
 
 As described in~\cite[\S13.1]{art-mp}, we should be inclined to think that the usage of the dictionary consists of 90\% lookups, 9\% insertions, and 1\% deletes.
-In \S\ref{sec:dict-metrics} we confirm this rule-of-thumb.
+In \S\ref{sec:dict-metrics} we confirm this simple rule-of-thumb.
 We further expose a counter-intuitive notion: most lookups fail.
-That is, most lookups return that the key searched for, was not found in the hash table.\footnote{%
+That is, most lookups return that the key searched for was not found in the hash table.\footnote{%
 	See \S\ref{sec:dict-metrics} on \texttt{\_Py\_dict\_lookup} for the full details.
 }
 
-This may be explained by the presence of iterations, that is, of operations that return the entire currently stored set of keys.
+This may be explained by the ubiquitous presence of iterations, that is, of operations that return the entire key-value set.
 Thus, it may be that in most cases, when a program looks up one specific key in the dictionary, it really isn't known whether the key is there or not.
-And furthermore, instead of looking up individual keys which are known to be there, programs prefer to iterate over all keys.
-This would result in individual lookups having a tendency to fail.
+And furthermore, instead of looking up all the individual keys which are known to be there, it may be that programs prefer to iterate over all keys.
+This would result in individual lookups exhibiting a tendency to fail.
 
 Based on this, we enhance the table hashing with the Robin Hood scheme, known in the literature~\cite{robin-hood,bolt}, which is especially effective in pruning searches for keys which are not in the table.
 Our approach, detailed in the following \S\ref{subsec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the dictionary to this scheme: we maintain the Robin Hood invariants, described later, as long as we can do so in a lock-free manner.
@@ -55,6 +55,25 @@ This operation essentially consists of enlarging the hash table so that the inva
 We also optionally store tags in the nodes, further stealing some bits, in order to reduce the necessity of lookups into the data table.
 The tag contains a portion of the hash of the key in the data table, when the tag does is not the same as the equivalent portion of the hash of the key looked up, the relevant entry in the data table is not visited.
 This reduces the cost of having split index and data tables.
+
+\paragraph{Python-generated hash values.}
+The hash functions generated for built-in CPython data types enjoy the following properties:
+\begin{enumerate}
+	\item objects which compare equal have the same hash value;
+	\item the computed hashes distribution is uniform, for a uniformly distributed set of values to be hashed;
+	\item their running time complexity is $O(1)$;
+	\item they don't necessitate holding locks, nor doing I/O, or whatever may be generally considered improper for a hash function\@.
+\end{enumerate}
+The reader may soon notice how these properties are generally true for all hash functions, with property (1) being fundamental for whatever hashing scheme to work, properties (3), and (4) being trivial for all hash functions known in the literature, and property (4) being what is usually the concern behind the implementation of hash functions.
+
+With hash functions being so foundational to the implementation of hash tables, it is important to make one explicit remark.
+There is no affordable guarantee that the hash functions we indirectly employ enjoy these properties too.
+That is to say, a hash function written in Python code may perform whatever arbitrary operation.
+For instance, it may very well acquire a lock, initiate a request to a remote machine on the network, read a large file from disk, or run an $O(n!)$ algorithm to produce the result.
+
+Of course, such behaviors would be completely unexpected of a hash function.
+Nevertheless, given their arbitrary nature, it is impossible to provide any sensible commentary on their enjoyment of the above properties.
+We will therefore resort to assume that those properties hold, as we have no control over those functions.
 
 
 \subsection{Concurrent Hash Table Design of Maier et al.}\label{subsec:maier}
@@ -356,6 +375,9 @@ For the sake of discussing the running time complexity of our routine, we will m
 	Also note that in Listing~\ref{lst:lookup}, the called pseudo-function is not the actual function, but an abstraction that eases discussion, without really impacting it.
 }
 
+Do note that in the \texttt{ReadEntry} sub-routine the key is always read before the value.
+This avoids the problem of torn-reads, exactly as described in~\cite[\S4, Lookup]{maier}.
+
 \lstinputlisting[
 	numbers=left,
 	stepnumber=5,
@@ -397,12 +419,60 @@ It is trivial to see that no thread's arbitrary delay can induce this lookup to 
 It is true that there is one aspect that evades the control of the author, namely the equality comparison.
 It can indeed be that the arbitrary code that is run also comprises a lock acquisition.
 Lock-freedom of that relevant code can in no way be evinced, nor enforced.
-Therefore, we can only run the assumption\footnote{%
-	Or rather, the hope.
+Therefore, we can only assume\footnote{%
+	Or rather, hope.
 } that the arbitrary code is sane and does not exhibit such surprising behavior.
 
 
 \section{Insert or Update}\label{sec:insert-or-update}
+
+The \texttt{ExpectedInsertOrUpdate} routine shown in Listing~\ref{lst:insert} departs from Maier's design of \cite[Algorithm~1]{maier} in that it doesn't expect the user to provide an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special \texttt{{NOT\_FOUND}} object).
+If the expected value was not the stored value (or the compare and set low-level call failed and the newly read value then differed from the expected one), then a special \texttt{{EXPECTATION\_FAILED}} object is returned.
+A routine that more closely resembles Maier's Algorithm~1, based on the one discussed here, is described later in~\S\ref{sec:aggregate}.
+
+There's also another special value called \texttt{ANY} that can be used as the expected value to signify that whatever the current value is, even an absent value, it should be replaced with the desired value.
+Returning the previous value, in conjunction with \texttt{ANY} as the expected value, also serves to reuse the same routine to behave like a swap, rather than a CAS\@.
+
+The three special objects \texttt{{ANY}}, \texttt{{NOT\_FOUND}}, and \texttt{{EXPECTATION\_FAILED}} cannot be used as keys or values in \texttt{AtomicDict}, so as to guarantee their semantics are consistent (cf.\texttt{\ {EXPECTATION\_FAILED}} being a value returned by this routine).
+This is enforced, but not otherwise shown here.
+
+If the expected value is either \texttt{{ANY}} or \texttt{{NOT\_FOUND}}, there is an insertion fast-path used in which the $d_0$ element in the index is CASed with the entry reserved without going through the currently stored data in the index.
+If this CAS succeeds, then the operation is completed.
+If it doesn't the general code path is followed.
+Notice that this doesn't compromise correctness: if the $d_0$ node was in fact empty, it means that the key wasn't in the hash table.
+
+Here, it is worth mentioning that this routine is not directly exposed, and is instead considered internal.
+Instead of calling this function directly, a user of \texttt{AtomicDict} is expected to call different Python idioms, which all internally call \texttt{ExpectedInsertOrUpdate}; namely:
+
+\begin{enumerate}
+	\item \texttt{{d[k] = v}}, eq. \texttt{{ExpectedInsertOrUpdate(\ldots, k, \ldots, ANY, v, \ldots)}};
+	\item \texttt{{d.compare\_and\_set(k, exp, des)}}, eq. \texttt{{ExpectedInsertOrUpdate(\ldots, k, \ldots, exp, des, \ldots)}}, which raises an exception when the expected value was not the stored value;
+	\item \texttt{{d.swap(k, v)}}, eq. \texttt{{ExpectedInsertOrUpdate(\ldots, k, \ldots, ANY, v, \ldots)}}, which is similar to (1) except it also exposes the previous value;\footnote{Not yet implemented.}
+\end{enumerate}
+
+In regards to (2) above, returning a boolean value is generally considered the standard.
+Such is what the hardware primitive essentially does, and also what other languages such as Java do.
+Nevertheless, in order to favor the usage of the Aggregate routine of~\S\ref{sec:aggregate}, which correctly implements a generic mutation to a value, it was chosen to expose this behavior.
+That is, simpler usages, such as incrementing a counter, or any other ``aggregations,'' should instead employ the more appropriate Aggregate routine.
+This \texttt{compare\_and\_set} method is thus intended to be used in scenarios where the expectation is ``taken for granted,'' and would otherwise require debugging if unmet; that is, where the failure of the expectation has more severe impacts than mere contentious access.
+Do note that this design does not pertain any correctness or performance goal; it, instead, has to do with the programmer's ergonomics in the usage of this lower-level routine.
+Not every programmer possesses thorough knowledge of concurrency issues, and an interface that alleviates some of those complexities is what the author strives to achieve.
+Whether or not this is actually simpler to use remains to be seen.
+
+The \texttt{ExpectedInsertOrUpdateCloseToDistance0} sub-routine is omitted for brevity.
+What it does can be described with the following steps:
+\begin{enumerate}
+	\item consider the nodes in the 16-byte-aligned region of memory the $d_0$ slot is part of, in sequence, starting from $d_0$:
+	\begin{enumerate}
+		\item if an empty slot is found either set \texttt{expectation} $=\bot$, if \texttt{expected} is neither \texttt{ANY} nor \texttt{{NOT\_FOUND}}, or attempt to insert the node in keeping with the Robin Hood invariant;
+		\item if a non-empty slot is found, check the tag, and possibly call the \texttt{ExpectedUpdateEntry} routine;
+	\end{enumerate}
+	\item set the \texttt{{must\_grow}} flag if the node would be inserted at a distance greater than the current maximum distance (and avoid modifying the index);
+	\item set the \texttt{done} flag accordingly.
+\end{enumerate}
+
+The \texttt{ExpectedUpdateEntry} sub-routine, which is also employed as a sub-routine of \texttt{ExpectedInsertOrUpdateCloseToDistance0}, is also omitted for brevity, its implementation resembles the \texttt{{check\_entry}} part of the \texttt{Lookup} routine (Listing~\ref{lst:lookup}, lines 38--65), but also performing an update, possibly signaling that the expectation failed.
+
 
 \lstinputlisting[
 	numbers=left,
@@ -413,19 +483,10 @@ Therefore, we can only run the assumption\footnote{%
 	label={lst:insert}
 ]{listings/insert.c}
 
-The ExpectedInsertOrUpdate routine departs from Maier's design (\S\cite[Algorithm~1]{maier}) in that it doesn't expect the user to provide an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special NOT\_FOUND object for a successful insertion, in which case either NOT\_FOUND or ANY were the expected value.)
-If the expected value was not the stored value (or the compare and set low-level call failed and the newly read value then differed from the expected one), then a special EXPECTATION\_FAILED object is returned.
+\subsection{Linearization}\label{subsec:insert-linearization}
 
-There's also another special value called ANY that can be used as the expected value to signify that whatever the current value is, even an absent value, it should be replaced with the desired value.
-The three special objects ANY, NOT\_FOUND, and EXPECTATION\_FAILED cannot be used as keys or values in AtomicDict, so as to guarantee their semantics are consistent (cf.\ EXPECTATION\_FAILED being a value returned by this routine.)
+\subsection{Lock-freedom}\label{subsec:insert-lock-freedom}
 
-If the expected value is either ANY or NOT\_FOUND, there is an insertion fast-path used in which the $d_0$ element in the index is CASed with the entry reserved without going through the currently stored data in the index.
-If this CAS succeeds, then the operation is completed.
-If it doesn't the general code path is followed.
-Notice that this doesn't compromise correctness: if the $d_0$ node was in fact empty, it means that the key wasn't in the dictionary.
-
-\subsection{Linearization}
-\subsection{Lock-freedom}
 
 \section{Delete}\label{sec:delete}
 
@@ -438,23 +499,84 @@ Notice that this doesn't compromise correctness: if the $d_0$ node was in fact e
 	label={lst:delete}
 ]{listings/delete.c}
 
-\subsection{Linearization}
-\subsection{Lock-freedom}
+\subsection{Linearization}\label{subsec:delete-linearization}
+
+\subsection{Lock-freedom}\label{subsec:delete-lock-freedom}
+
 
 \section{Migrations: growth, shrinking, and compaction}\label{sec:migrations}
 
-\subsection{Linearization}
-\subsection{Non-lock-freedom}
+\subsection{Linearization}\label{subsec:migration-linearization}
+
+\subsection{Non-lock-freedom}\label{subsec:migration-lock-freedom}
+
 
 \section{Approximate size}\label{sec:approximate-size}
 
-\subsection{Linearization}
-\subsection{Lock-freedom}
+An approximation of the number of elements stored in the hash table is inferred by the number of pages present.
+Three separate, atomic counters are kept:
+
+\begin{itemize}
+	\item the greatest allocated page $P_A$;\footnote{%
+		This counter is also used to keep track of the used portion of the pages array, and is the one considered when a thread makes a new reservation into the data table.
+	}
+	\item the greatest deleted page $P_D$; and
+	\item the greatest refilled page $P_R$.
+\end{itemize}
+
+The three counters serve to provide a rough estimate on the number of elements currently stored: as new elements are inserted new data table pages need to be allocated, and when numerous elements are deleted they get defragmented into their own pages, before the pages get eventually freed, or be refilled.
+Note that initially, when there are yet to be inserted any elements, their respective values will be 0, -1, and -1.
+
+So an upper bound for the number of elements contained in the dictionary is:
+\[
+(P_A - P_D + P_R) \times |P|
+\]
+
+The bound is then also refined by visiting the $P_A$ and $P_R$ pages, decrementing it of the amount of elements that entries that weren't filled in those pages.
+There is also a lower bound, which is computed by decrementing the upper bound by the unused reservations, accounted by traversing the accessors' storages.
+Therefore, the running time complexity of this operation is $\Theta(t)$.
+
+The mean (floor division by 2) of the lower and upper bounds is then reported to the user upon request.
+
+\paragraph{Linearization and lock-freedom.}
+This is trivially a lock-free algorithm.
+The linearization here depends on the three reads required for $P_A$, $P_D$, and $P_R$, as well as the $\Theta(t)$ reads required to traverse the accessors' storages.
+
+???
 
 \section{Consistent size}\label{sec:consistent-size}
 
-\subsection{Linearization}
-\subsection{Non-lock-freedom}
+Given that the linearization of the above approximation of the size of the hash table is sub-optimal at best, it was decided that there would also be a definite, sequentially consistent size retrieval of the hash table.
+This is achieved by using thread-local size counters: each thread keeps track of how many items it has inserted, incrementing its local counter, and how many items it has deleted, decrementing its local counter.
+(Thus, it may be that one thread's local counter is negative.)
+The thread-local counters are kept in each thread's accessor's storage, and are recorded by using regular reads and writes: they are protected by the accessor's lock.
+
+Upon request, a Synchronous Operation (\S\ref{subsec:synchronous-operations}) begins in order to correctly sum the thread-local counters.
+The counters are reset to 0 before the Synchronous Operation ends.
+The result is cached into the \texttt{AtomicDict} and a dirty flag is kept in order to possibly avoid restarting a Synchronous Operation at every request, if no insertions or deletions marked the cached value as dirty.
+That cached value is stored with a Python integer.
+Upon a new request, if the dirty flag is set, the sum of the thread-local counters, plus the cached value is computed and stored.\footnote{%
+	Such happens always, but initially the counter is set to 0.
+}
+
+Note that it is much faster to keep thread-local counters and then acquire locks to read them, rather than to keep a shared counter.
+Using a Synchronous Operation for this also implies that its semantics are trivially sequentially consistent.
+It can be argued that to retrieve this consistent size, there is a missed opportunity cost related to the exclusion of all other threads from using the hash table.
+While true in principle, it should be noted that this is an $\Theta(t)$ operation, thus independent of the table size, and generally quite fast.
+For these reasons, this is the routine that is exposed by default.
+If a program cannot withstand the added cost of mutual exclusion (perhaps because it frequently asks for the size of the hash table, whilst this is being concurrently mutated), it is still possible to access the approximate size described in the above Section, which is quite accurate and lock-free, whilst also being a fast operation.
+Additionally, under the situation of high-frequency concurrent mutations, it may make more sense to retrieve an approximation of the size rather than a sequentially consistent size.
+The sequentially consistent size computed during a call to this routine, may be invalidated immediately upon returning its output.
+
+Notwithstanding the limitation on the number of nodes that can be present into the presented hash table at any given time ($2^{56}$), as prescribed by Table~\ref{tab:robin-hood-nodes}, a counter of 64-bits is not necessarily sufficient.
+Consider the situation in two threads concurrently insert and delete $2^{64}$ items, so that one thread only performs insertions, and the other only performs deletions (or any other equivalent situation).
+Care then needs to be taken in order to avoid running into integer overflows or underflows, a notorious presence in C code.
+Before such an event occurs, the thread that detects it (its local counter is \texttt{MAX\_INT64} during an insert, or \texttt{MIN\_INT64} during a delete), the thread repeatedly tries to add (CAS) its local counter to the \texttt{AtomicDict}'s cached value, while holding its local accessor's storage mutex.
+This way, no Synchronous Operation can begin, and it is safe to add the protected value, before resetting it to 0.
+If another thread finds itself in the same condition, the competing threads will serialize based on the CAS to the cached counter.
+
+\paragraph{Linearization and non-lock-freedom.}
+With this being a Synchronous Operation, it is trivial to see that it is not lock-free, and its linearization follows that of other Synchronous Operations.
 
 \section{Batch lookup}\label{sec:batch-lookup}
 
@@ -506,32 +628,111 @@ The batch is subdivided into chunks of a configurable size.
 This is intended to prevent the over-fetching of memory.
 That is, the cache of an individual processor may become overly filled with the prefetched portions of the index, and the hardware will proceed to evict lines of cache before they are actually read by the lookups that requested them.
 
-\subsection{Linearization}
+\subsection{Linearization}\label{subsec:batch-lookup-linearization}
 
 The linearization of this method is intended as the individual linearizations of the distinct lookup operations.
 Each distinct lookup is linearizable, although the overall invocation is not.
 Therefore, it is possible for a result of this method to not be sequentially consistent.
 
 
-\subsection{Lock-freedom}
+\subsection{Lock-freedom}\label{subsec:batch-lookup-lock-freedom}
+
 
 \section{Aggregate}\label{sec:aggregate}
 
+A notorious behavior of using CAS semantics is to repeatedly make the call to the CAS routine in order to cope with concurrent mutations to the contested area of memory.
+We are especially interested into efficiently and ergonomically handling the mutation of the value of a given key, for such is an important use-case for hash tables in general.
+
+We here propose, without an accompanying implementation, an interface that is believed to satisfy the both the efficiency and ergonomics goals, which is also very similar to~\cite[Algorithm~1]{maier}.
+Instead of providing an expected and a desired value, the programmer specifies the desired mutation.
+Consider the following piece of Python code.
+\begin{lstlisting}[label={lst:aggregate-usage}, language=Python]
+	d = AtomicDict({...})
+
+	d.aggregate(key="spam",
+	  mutation=lambda current_value:
+	    1 if current_value is NOT_FOUND else current_value + 1
+	)
+\end{lstlisting}
+Do note the \texttt{lambda} expression on line 4, which is a Python idiom to define an anonymous function, within an expression.
+
+A programmer using this method should be instructed to write a function that handles both the cases of the key being present or not, and that there should be no assumptions as to the number of times this function is called before its described mutation is actually applied to the value.
+
+That function is thus called, possibly multiple times by a routine that behaves like the following:
+\begin{lstlisting}[label={lst:aggregate}, language=Python]
+	expected = d.get(key, cereggii.NOT_FOUND)
+	while True:
+	  try:
+	    d.compare_and_set(key, expected, mutation(expected))
+	  except cereggii.ExpectationFailed:
+	    expected = d.get(key, cereggii.NOT_FOUND)
+	  else:
+	    break
+\end{lstlisting}
+Such routine would likely be implemented in C code, for the sake of uniformity with the rest of the implementation of \texttt{AtomicDict}.
+
+The very specific method of calling a CAS method in the above Listing~\ref{sec:aggregate} is very commonly known in the literature, albeit certainly more common to be written in a form where the CAS operation returns a boolean, rather than raising an exception.\footnote{%
+	See also the relevant discussion in~\S\ref{sec:insert-or-update}.
+}
+The fact that this is well known in the literature, though, does not directly imply that it is also well known in the literacy of Python programmers.
+For many programmers who are not accustomed to the domain of concurrency, the above Listing should probably be explained and broken down, before its semantics are fully appreciated.
+To provide a transparent and standardized way to access such shared knowledge is therefore considered fruitful.
+
+Do note that the atomicity of this \texttt{aggregate} method is violated if within the provided mutation function, a lookup into \texttt{d} is performed.
+Or in other words, this is not a suitable design for a mutation that requires a sequentially consistent view of more than one key in the dictionary.
+
 \subsection{Reduce}\label{subsec:reduce}
 
-\subsection{Linearization}
-\subsection{Lock-freedom}
+In order to provide further performance improvements, another method could be added, already otherwise known in computing as \emph{reduce}.
+Such is a foundational concept of many computing models, most notably those based around the concept of map-reduce like for instance Hadoop.
+As such, it could easily be provided based on the above \texttt{aggregate} method, and further enhanced to reduce contentious access to the dictionary.
+Its usage would be something resembling the following lines of code:
+\begin{lstlisting}[label={lst:reduce-usage}, language=Python]
+	d = AtomicDict({...})
+
+	batch = [
+	  (key_1, value_1),
+	  ...
+	  (key_n, value_n),
+	]
+
+	d.reduce(iterator=batch,
+	  mutation=lambda key, current_value, new_value:
+	    new_value if current_value is NOT_FOUND
+	    else current_value + new_value
+	)
+\end{lstlisting}
+
+The mutation function here is made more complex because it needs to be also independent of the key and value: the same function needs to be applied for every key-value pair in \texttt{iterator}.
+The parameter \texttt{key} is added so as to satisfy the possible cases in which the computation is dependent on the key itself.\footnote{%
+	It is immediatly clear for a customary Python programmer that the \texttt{lambda} expression could be exchanged for a full non-inline function definition using \texttt{def}.
+	Such is the expected usage for more complex mutations than the trivila one shown here.
+	Nevertheless, it is worth pointing this out for the less Python-expert reader.
+}
+
+Contention can be reduced by first accumulating an intermediate result into a thread-local hash table, and then applying the \texttt{aggregate} method for each item in the local hash table.
+This reduces contention because the repetition of keys in the passed iterator is not made visible to other threads, but only to the thread-local hash table.
+
+Since this thread-local hash table certainly requires allocation of memory, its size could also be bound.
+Upon reaching the bound the accumulated intermediate result is applied to the \texttt{AtomicDict}, and then the operation is repeated until the exhaustion of \texttt{iterator}.
+
+
+\paragraph{Linearization and lock-freedom.}
+The linearization and lock-freedom of \texttt{aggregate} and \texttt{reduce} is chiefly dependent on the respective properties of the \texttt{ExpectedInsertOrUpdate} routine that is being called in order to implement them.
+Thus, refer to~\S\ref{subsec:insert-linearization} and \S\ref{subsec:insert-lock-freedom} for further discussion.
+
 
 \section{Iterations}\label{sec:partitioned-iterations}
 
 \subsection{Iteration Partitioning}\label{subsec:iteration-partitioning}
 
-\subsection{Linearization}
+\subsection{Linearization}\label{subsec:iter-linearization}
+
 \subsection{Lock-freedom}
 
 \section{Proposal for a consistent iteration}\label{sec:consistent-iteration}
 
-When a thread iterates over the hash table with the iterator described above in \S\ref{sec:partitioned-iterations}, it may encounter sequentially inconsistent behaviors, if other threads are concurrently mutating the table.
+When a thread iterates over the hash table with the iterator described above in~\S\ref{sec:partitioned-iterations}, it may encounter sequentially inconsistent behaviors, if other threads are concurrently mutating the table.
 For instance:
 \begin{enumerate}
 	\item the same key is emitted more than once; or
@@ -544,5 +745,55 @@ For instance:
 These may be very surprising behaviors for a programmer trying to debug an incorrect execution of an iterating thread.
 The necessity for a sequentially consistent iterator lies therein.
 
-\subsection{Linearization}
-\subsection{Non-lock-freedom}
+Those behaviors may be exhibited in the following circumstances, respectively:
+\begin{enumerate}
+	\item the iterating thread $t_l$ visits the data table entry $e$ in which some key $k$ is stored $\rightarrow$ another thread $t_d$ deletes $k$ $\rightarrow$ another thread $t_i$ re-inserts $k$ at a location $e'$ in the data table s.t.\ $e < e'$ $\rightarrow$ $t_l$ visits $e'$ in which $k$ is stored.\footnote{%
+		It may also be that $t_d \equiv t_i$.
+	}
+	\item the iterating thread $t_l$ visits the data table at location $e$ where the key $k_1$ is stored $\rightarrow$ update $u_1$ to key $k_1$ is performed by another thread $t_{u_1}$ $\rightarrow$ update $u_2$ to key $k_2$, stored at location $e'$ s.t. $e < e'$ is performed by another thread $t_{u_2}$ $\rightarrow$ $t_l$ visits the data table location $e'$, seeing the effect of update $u_2$.\footnote{%
+		It may also be that $t_{u_1} \equiv t_{u_2}$.
+	}
+\end{enumerate}
+
+To implement a cost-efficient and consistent iteration seems to be possible, based on the following design.
+
+\begin{enumerate}
+	\item The iterating thread $t$ begins a Synchronous Operation (\S\ref{subsec:synchronous-operations});
+	\item it generates an iteration ID $i$;\footnote{%
+		Given that there will be need to store some data per iterator, it may be that the iteration ID is the pointer to this alleged C structure.
+	}
+	\item it allocates a new local pages array of the same size of the used portion of the data table's pages array;
+	\item it traverses the \texttt{AtomicDict}'s pages array, and for each page:
+	\begin{enumerate}
+		\item it sets the \texttt{iteration} field on the page to $i$;
+		\item it copies the page pointer into the local pages array;\footnote{%
+			This copy can actually be done separately using \texttt{memcpy} on the pages array directly, which should significantly improve performance, since \texttt{memcpy} is such a highly optimized kernel function.
+		}
+		\item it increments the page reference count;
+	\end{enumerate}
+	\item $t$ ends the Synchronous Operation; and
+	\item proceeds iterating over the new pages.
+	\item When the iteration completes, it decrements the reference count of the pages in the local pages array, and frees the array.
+\end{enumerate}
+
+When the iteration field of a page is set (i.e.\ $\not\eq$ \texttt{NULL}), the page is considered to be immutable.
+A thread that wishes to mutate it, should thus first copy the page's contents into a newly allocated page, and then atomically swap the two pages in the pages array.
+If the swap fails, then it means that another thread has swapped the page into a mutable page: it cannot be that the newly swapped-in page is immutable because that requires holding all of the accessors' locks.
+
+The creation of new mutable pages is therefore entirely offloaded from the iterating thread, to the other \texttt{AtomicDict}'s accessors.
+This is a feature of the design.
+Consider the opposite case in which the iterating thread additionally has to allocate more pages and swap them in the pages array, or equivalently has to create its own immutable pages.
+In this scenario the Synchronous Operation itself would take much longer.
+Thus, hindering the performance of the other accessors which are trying to apply mutations to the hash table (recall that lookups are permitted in spite of Synchronous Operations).
+That is, there is a missed opportunity cost associated with it.
+
+Instead, the parallelization of threads which independently swap the immutable pages out for their mutable copies, entails that multiple threads can be used to create the new pages.
+And, furthermore, that if no mutations were actually going to happen, either at all or in a subset of the pages, then strictly less work is required overall.
+
+It may also be entirely possible to permit the re-usage of the iteration ID\@.
+So that if a thread sees that all pages refer to the same iteration ID, then it avoids marking the pages as immutable, and instead copies the associated data into its own iterator.
+
+
+\paragraph{Linearization and non-lock-freedom.}
+With this being a Synchronous Operation, it is trivially not lock-free.
+Its linearization also follows the semantics of the Synchronous Operation: the iterator linearizes when it manages to acquire all the required locks.
