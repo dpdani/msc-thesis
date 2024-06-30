@@ -60,11 +60,12 @@ This reduces the cost of having split index and data tables.
 The hash functions generated for built-in CPython data types enjoy the following properties:
 \begin{enumerate}
 	\item objects which compare equal have the same hash value;
+	\item one object always produces the same hash value;
 	\item the computed hashes distribution is uniform, for a uniformly distributed set of values to be hashed;
 	\item their running time complexity is $O(1)$;
 	\item they don't necessitate holding locks, nor doing I/O, or whatever may be generally considered improper for a hash function\@.
 \end{enumerate}
-The reader may soon notice how these properties are generally true for all hash functions, with property (1) being fundamental for whatever hashing scheme to work, properties (3), and (4) being trivial for all hash functions known in the literature, and property (4) being what is usually the concern behind the implementation of hash functions.
+The reader may soon notice how these properties are generally true for all hash functions, with properties (1) and (2) being fundamental for whatever hashing scheme to work, properties (4), and (5) being trivial for all hash functions known in the literature, and property (3) being what is usually the concern behind the implementation of hash functions.
 
 With hash functions being so foundational to the implementation of hash tables, it is important to make one explicit remark.
 There is no affordable guarantee that the hash functions we indirectly employ enjoy these properties too.
@@ -415,6 +416,7 @@ Failed lookups, i.e.\ lookups that don't find the searched key, linearize on lin
 \paragraph{Lock-freedom.}
 
 It is trivial to see that no thread's arbitrary delay can induce this lookup to also be subjected to an arbitrary delay, insofar as the code presented is concerned.
+Thus, the lookup operation is lock-free.
 
 It is true that there is one aspect that evades the control of the author, namely the equality comparison.
 It can indeed be that the arbitrary code that is run also comprises a lock acquisition.
@@ -423,10 +425,14 @@ Therefore, we can only assume\footnote{%
 	Or rather, hope.
 } that the arbitrary code is sane and does not exhibit such surprising behavior.
 
+The \texttt{Lookup} above described is not wait-free.
+In fact, the check at line 69 makes it so that when a concurrent insert sets the metadata's \texttt{{is\_compact}} flag to $\bot$, the lookup operation needs to be retried.
+Additionally, the lookup operation must be retried in case of concurrent migrations that may have potentially linearized before the lookup.
+
 
 \section{Insert or Update}\label{sec:insert-or-update}
 
-The \texttt{ExpectedInsertOrUpdate} routine shown in Listing~\ref{lst:insert} departs from Maier's design of \cite[Algorithm~1]{maier} in that it doesn't expect the user to provide an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special \texttt{{NOT\_FOUND}} object).
+The \texttt{ExpectedInsertOrUpdate} routine shown in Listing~\ref{lst:insert} departs from Maier's design of~\cite[Algorithm~1]{maier} in that it doesn't expect the user to provide an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special \texttt{{NOT\_FOUND}} object).
 If the expected value was not the stored value (or the compare and set low-level call failed and the newly read value then differed from the expected one), then a special \texttt{{EXPECTATION\_FAILED}} object is returned.
 A routine that more closely resembles Maier's Algorithm~1, based on the one discussed here, is described later in~\S\ref{sec:aggregate}.
 
@@ -490,6 +496,119 @@ The \texttt{ExpectedUpdateEntry} sub-routine, which is also employed as a sub-ro
 
 \section{Delete}\label{sec:delete}
 
+Albeit an infrequently used feature of hash tables, according to the data shown in~\S\ref{sec:dict-metrics}, supporting deletions has taken a substantial portion of the development time for the implementation of \texttt{AtomicDict}.
+Several design iterations have been evaluated, and are not explored here in detail.
+The current proposal, which is not fully implemented as of the time of writing, is what follows.
+
+Deleting a key $k$ from the hash table is considered linearized when the value, i.e.\ a pointer to a \texttt{PyObject} stored in the data table entry, associated with $k$ is set to \texttt{NULL}.\footnote{%
+	Being such a conceptually simple semantics for delete, this is the part that has remained constant throughout the iterations on the design.
+}
+After this happens, the relevant index node is exchanged for a tombstone, so as to avoid requiring lookups from visiting the data table entry, and a synchronous operation may be started so as to defragment the data table.
+Additionally, a shrink migration may be triggered as well, if the estimated size, given by the upper-bound formula in~\S\ref{sec:approximate-size}, is less than the minimum fill ratio.\footnote{I.e. 1/3 by default.}
+
+These three additional steps are carried out in the delete routine, because:
+\begin{enumerate}
+	\item deletes are considered infrequent, so adding cost to them and relieving other routines of this work, is considered to be a decrease in cost overall, as is the case for the tombstone exchange, i.e.\ make the delete more complex so that lookups are faster;
+	\item if deletes happened to be frequent instead, it would likely be that the program expects the memory consumption of the hash table to decrease, which is what we do by defragmenting the data table and triggering a shrink migration.
+\end{enumerate}
+
+Given that atomically setting a key's value to \texttt{NULL} is such a simple operation, let us not talk about it further for now, and instead let us focus on the tombstone, the defragmentation, and the shrink trigger.
+
+
+\subsection{Exchanging the node for a tombstone}\label{subsec:exchanging-node-tombstone}
+
+The swapping for a tombstone node is fairly simple and is shown in lines 33--36 of Listing~\ref{lst:delete}.
+Recall that doing this swap instead of simply deleting the node is necessary, as already described in~\S\ref{subsec:lazy-robin-hood}, and in~\cite[\S6.4]{the-art-vol-2}.
+In our circumstances, is especially useful in order to help concurrent lookups: the thread looking up a key $k$ may very well visit the data table entries pertaining to the visited nodes in the index, possibly finding that $k$ had been deleted by reading that its associated value $\eq$ \texttt{NULL}.
+But reading a data table entry is much more costly than reading a node in the index, given that the index nodes are much smaller in size compared to a data table entry; and that the next node index to visit is very likely to already be in the processor's cache, and the entry likely isn't.
+
+The \texttt{LookupEntry} routine, omitted for brevity, is essentially equivalent to the \texttt{Lookup} routine shown in Listing~\ref{lst:lookup}, but instead of looking for a node that points to an entry that contains the searched key, it looks for a node that points to a certain fixed location of the data table; thus it is an operation that only involves reading the index.
+
+The tombstone node is possibly moved further down its probe, if such is possible within a single atomic write; that is, as long as the atomic write is of at most 16-bytes, and is 16-bytes aligned.
+
+
+\subsection{Defragmenting the data table}\label{subsec:defragmenting}
+
+Keep a per-page deletions counter noted as $d(p)$, for some page $p$.
+After a delete, atomically increment $d(p)$.
+If $d(p) \geq \frac{|P|}{2}$, initiate a merge.
+
+The following description is what occurs after a merge operation has been triggered.
+\begin{enumerate}
+%	\item select a page to be cleared: the lowest-numbered page having no active reservations;
+%	\begin{enumerate}
+%		\item since page number 0 can never be cleared because it hosts entry number 0, which has to remain for the correctness of tombstones, start the search from page number 1;
+%		\item if no such page can be found: abort the merge operation;
+%	\end{enumerate}
+%	\item look at the per-page deletions counters to find the number of slots required;
+%	\item move the entries of the page to be cleared into the found empty slots;
+%	\item change the nodes that are still referring to the cleared page, to point to the new entries instead.
+	\item Look for another page $x$ s.t. $d(x) \geq \frac{|P|}{2}$, distinct from the page from which the merge was triggered.
+	\begin{enumerate}
+		\item Since page number 0 can never be cleared because it hosts entry number 0, which has to remain for the correctness of tombstones, start the search from page number 1; and\footnote{%
+			These checks are omitted for brevity from Listing~\ref{lst:delete}.
+		}
+		\item if no such page can be found, abort the merge operation.
+	\end{enumerate}
+	\item W.l.o.g.\ call $p_1$ the lower-numbered page, and $p_2$ the other.
+	\item Let $p_0$ be the lowest non-empty page in the data table.
+	It may be that $p_0 \equiv p_1$, and that is fine.
+	\item Move the elements found in $p_0$ into $p_2$.
+	When $p_2$ becomes full, move the remaining elements into $p_1$ instead.
+	(Note that if $p_0 \equiv p_1$, then $|p_0| = |p_1| \leq \frac{|P|}{2}$, and also $|p_2| \leq \frac{|P|}{2}$, therefore $|p_0| + |p_2| \leq |P|$.
+	Thus, all elements from $p_0 \equiv p_1$ will be moved into $p_2$.)
+	That is, $\forall e \in p_0$:
+	\begin{enumerate}
+		\item clear $e \in p_0$;
+		\item write $e$ into a free slot of $p_2$ (possibly overwriting deleted slots);
+		\item if $e$ is a reservation with unoccupied slots left:
+		\begin{enumerate}
+			\item write the unoccupied slots too;
+			\item look into every accessor's storage (this is already a Synchronous Operation) and edit the relevant reservation to point to the new slot; and
+		\end{enumerate}
+		\item update the relevant node in the index to point to the new location.
+	\end{enumerate}
+	\item Update $d(p_0)$, $d(p_1)$, and $d(p_2)$ accordingly.
+\end{enumerate}
+
+The relevant pseudocode can be found in Listing~\ref{lst:delete}, lines 40--87.
+
+
+\subsection{Triggering a shrink migration}\label{subsec:triggering-a-shrink}
+
+After a merge operation completes, as described in the above Section, a shrink migration may be triggered, following the increment of the greatest deleted page field in the metadata.
+It would cause the size of the index and of the pages array to be reduced, if usage is below a certain threshold, which by default is of 1/3, keeping consistent with Python's \texttt{dict} defaults.
+
+The thread caller of \texttt{Delete} is responsible for actually initiating the shrink migration, after having yielded its accessor's lock.
+
+
+\subsection{The current implementation}\label{subsec:the-current-implementation}
+
+The current implementation, which is not shown here, is essentially similar to the one described so far, but instead of the page-merge algorithm, defragmentation is carried out by swapping entries.\footnote{%
+	This implementation can be found in~\cite{cereggii}, at \url{https://github.com/dpdani/cereggii/blob/40eb43084232263716dc5e7fe753253fdc042e6b/src/cereggii/atomic_dict/delete.c}, last accessed \today.
+}
+When a key is deleted, its entry is swapped with another entry stored at a lower-numbered location, so as to maintain the possibility of eventually incrementing the deleted pages counter ($P_D$ in~\S\ref{sec:approximate-size}).
+Notice how the necessity for defragmentation remains, in order to provide a fairly cheap and wait-free approximation of the size, which is required by the \texttt{Delete} routine\footnote{%
+	And also by the \texttt{ExpectedInsertOrUpdate} routine.
+} in order to know when to trigger a migration.
+Other mechanisms for triggering migrations that don't require defragmentation could have been adopted, but this one is particularly useful because it also makes iterations faster, by reducing the necessity of an iterating thread to visit empty entries of the fragmented data table.
+
+A way for the swapping operation to be carried out safely in spite of concurrent mutations was found.
+At first the deleted entry, already having value $\eq$ \texttt{NULL}, would be marked as entombed, so that successive unfinished modifications due to the swap mechanism would not be read as valid entries by other threads.
+Then, a swapping entry would be looked for in the data table, at a lower-numbered location.
+The swapping entry would be flagged as such, so that no other concurrent delete may try to swap the same entry.
+Then, the key and value of the swapping entry would be copied to the deleted entry, whose entombed state would be kept.
+The value of the swapping entry would be substituted with a flagged pointer to the entombed entry, which would signal to a thread that is reading the swapped entry that it should go and read the other entry.
+Finally, the index node pointing to the swapped entry is modified to point to the previously entombed entry.
+
+The above is considered possible to implement in a lock-free fashion.
+Nevertheless, it exhibits a problem concerning torn reads: suppose a thread reads the key part of the entry before the entry is marked as deleted, then it gets deleted and swapped, the thread that read the previous key now proceeds and reads the swapped value, thinking that it pertains to the prior key.
+However much unlikely this scenario may appear to be, it still needs to be considered, given that the hardware does not generally expose double-word atomic reads.
+
+Swapping entries to defragment unoccupied slots of data table pages, requires a lot of care.
+This renders the implementation of deletes much harder to explain and to maintain over time, possibly by people other than the present author.
+It also doesn't provide any immediate benefit: memory reclaim is deferred to the next shrink anyway, whereas merges being Synchronous Operations (albeit shorter operations compared to shrinks), means that memory is reclaimed sooner and more frequently.
+
 \lstinputlisting[
 	numbers=left,
 	stepnumber=5,
@@ -501,7 +620,25 @@ The \texttt{ExpectedUpdateEntry} sub-routine, which is also employed as a sub-ro
 
 \subsection{Linearization}\label{subsec:delete-linearization}
 
+The presented \texttt{Delete} operation is linearizable.
+Its semantics (i.e.\ removing a key $k$ from the key-set $K$), are observable instantaneously at line 18 when the value associated with $k$ is set to \texttt{NULL}, with an atomic CAS operation.
+Such is for a successful invocation, i.e.\ one that actually removes $k$ from $K$.
+Whereas a failed invocation, i.e.\ one that finds $k \not\in K$, is linearized inside the call to the \texttt{Lookup} routine of line 8.
+With the \texttt{Lookup} routine being already shown linearizable in~\S\ref{subsec:lookup-linearization}, it follows that also a failed invocation of a delete operation is linearizable.
+
+\texttt{Delete} is linearizable also in spite of concurrent deletions of the same key $k$.
+Under such circumstances, the successful CAS of line 18 by the one successful invocation linearizes that call to \texttt{Delete}, as above; while the failed CAS of but the same line 18, will result into the visiting of line 22, forcing the delete operation to be retried, and then fail, as aforementioned.
+
+
 \subsection{Lock-freedom}\label{subsec:delete-lock-freedom}
+
+The presented \texttt{Delete} operation is lock-free.
+\texttt{Delete} is not wait-free, because a delete for a certain key $k$ by thread $t_1$ may be delayed by a concurrent delete\footnote{%
+	It may also be delayed by a concurrent update, but the presented reasoning is sufficient to prove non-wait-freedom.
+} for the same key $k$ by another thread $t_2$.
+When that happens, $t_1$ is delayed in performing a retry, as specified in the pseudocode at line 22.
+If the same key $k$ is continuously deleted and re-inserted by threads other than $t_1$ it may be that $t_1$ is delayed indefinitely, since there is no mechanism for fairness.
+It follows that the presented deletion is not wait-free.
 
 
 \section{Migrations: growth, shrinking, and compaction}\label{sec:migrations}
@@ -586,7 +723,7 @@ Instead, a batch of keys can be submitted for lookup, in one invocation.
 
 An example call:
 
-\begin{lstlisting}[language=Python]
+\begin{lstlisting}[language=Python,label={lst:batch-lookup-usage}]
 foo = AtomicDict({'a': 1, 'b': 2, 'c': 3})
 result = foo.batch_getitem({
   'a': None,
@@ -722,17 +859,57 @@ The linearization and lock-freedom of \texttt{aggregate} and \texttt{reduce} is 
 Thus, refer to~\S\ref{subsec:insert-linearization} and \S\ref{subsec:insert-lock-freedom} for further discussion.
 
 
-\section{Iterations}\label{sec:partitioned-iterations}
+\section{Iterations}\label{sec:iterations}
+
+Iterations\footnote{%
+	In~\cite{maier} referred to as \emph{Forall} operations.
+} are designed to be particularly efficient in \texttt{AtomicDict}, mostly because of the design of the data table itself, which helps with cache efficiency, being the entries close to one another.
+The hardware memory pre-fetching subsystem can also help here by observing the linear memory access pattern.
+
+In fact, the presented iteration system, accessible through the \texttt{{fast\_iter}} method, has been showed to perform twice as fast, compared to Python's \texttt{dict} iterator, even for single threaded executions.\footnote{See Chapter~\S\ref{ch:measurements}.}
+Additionally, the partitioning scheme described in the following Section enables truly multi-threaded usage of an iterator, by creating per-partition iterators.
+This is something that is not available in \texttt{dict}'s implementation.
+
+Iterating is done primarily over the data table.
+A thread starts by fetching the first page, then (skipping over empty or deleted cells, including entry 0) reads the first entry of the page, yielding the item back to the caller (generally i.e.\ Python code), after storing the next location to visit.
+The Python code then loops calling this same function again, which will then yield the result of the stored location, and again incrementing the next location to visit before yielding again.
+This requires the creation of a small iterator \texttt{PyObject} to keep track of the next location to visit, a common necessity for adhering to the Python loop protocol.
+
 
 \subsection{Iteration Partitioning}\label{subsec:iteration-partitioning}
 
-\subsection{Linearization}\label{subsec:iter-linearization}
+The so-far described iteration scheme is further enhanced with partitioning.
+When multiple threads want to iterate over the same hash table, it may very well make sense for the application that they visit disjoint subsets of the stored key-set.
 
-\subsection{Lock-freedom}
+This is achieved by letting the thread declare the number of partitions $\pi$, and the partition number $i$ assigned to it (a thread identifier of some sort), s.t. $i \in [0, \pi)$.
+In order for the partition to actually yield disjoint subsets, $\pi$ has to be known to the other participating threads as well, and is intended to be equal to the number of threads participating in the iteration.
+Furthermore, $i$ needs to be assigned uniquely to each thread.
+
+A call to \texttt{{fast\_iter(partitions=$\pi$, this\_partition=$i$)}} will then visit those pages for which it holds that their page number $p \mod \pi = i$.
+Therefore, the number of keys per subset is not guaranteed to be to be uniformly distributed.
+Nevertheless, if the key-set is large enough (that is, $|K| \gg \pi \times |P|$), and the number of deleted keys per-page is nearly constant on average (that is, let $\mu = E[d(p)]$ and $\sigma$ its standard deviation, $\sigma \ll \mu$), then the distribution of keys per partition is also nearly constant on average.
+
+
+\subsection{Non-linearization and lock-freedom}\label{subsec:iteration-linearization-lock-freedom}
+While the lock-freedom property this operation enjoys is particularly self-evident, its linearization is trickier.
+
+This iteration is in fact not guaranteed to be consistent with any sequentially consistent access, and is therefore not considered linearizable.
+In fact, repeated calls to ask for the next element in the iterator are required, as per Python's iteration protocol, in order to fulfill the iteration completely.
+As such, it cannot be that, as informally defined in~\cite[Principle~3.5.1]{art-mp}:
+\begin{quote}
+	[the] method call [appears] to take effect instantaneously at some moment between its invocation and response.
+\end{quote}
+Trivially then, the formal definition~\cite[Definition~3.6.1]{art-mp} also does not apply.
+
+It is therefore advised to use this faster iterator when it is somehow known, by the logic of the program, that there will be no concurrent mutations.
+See the Section below for further considerations.
+
 
 \section{Proposal for a consistent iteration}\label{sec:consistent-iteration}
 
-When a thread iterates over the hash table with the iterator described above in~\S\ref{sec:partitioned-iterations}, it may encounter sequentially inconsistent behaviors, if other threads are concurrently mutating the table.
+The following proposal for a consistent iteration has not been implemented yet, but it should be fully described here.
+Nevertheless, once implemented, it will be the standard iteration scheme adopted, given that its semantics are much more immediate to understand.
+When a thread iterates over the hash table with the iterator described above in~\S\ref{sec:iterations}, it may encounter sequentially inconsistent behaviors, if other threads are concurrently mutating the table.
 For instance:
 \begin{enumerate}
 	\item the same key is emitted more than once; or

@@ -1,4 +1,4 @@
-int Delete(meta, key, hash)
+int Delete(meta, key, hash, *should_shrink)
 {
   // assumptions:
   //   - meta, key != NULL
@@ -28,9 +28,16 @@ beginning:
   Decref(result.entry.value);
   result.entry.value = NULL;
 
-  should_shrink = false;
+  location = result.node.location;
 
-  page = PageOf(result.entry_p);
+  while (!CompareAndSet(&meta->index[result.position],
+      result.node, meta->tombstone)) {
+    LookupEntry(meta, location, hash, &result);
+  }
+
+  *should_shrink = false;
+
+  page = PageOf(location);
   if (AddThenFetch(page->del_counter, 1) >= PAGE_SIZE / 2) {
     BeginSyncOp();
 
@@ -62,17 +69,17 @@ beginning:
 
       Merge(p_0, p_1, p_2);  // cannot fail
 
-      if (Size(p_0) == 0) {
-        Decref(meta->pages[p_0]);
-        meta->pages[p_0] = NULL;
+      assert(Size(p_0) == 0);
 
-        meta->greatest_deleted_page++;
-        used_pages = meta->greatest_allocated_page
-          - meta->greatest_deleted_page
-          + meta->greatest_refilled_page;
-        if ((used_pages) * PAGE_SIZE <= meta->size * MIN_USED_RATIO) {
-          should_shrink = true;
-        }
+      Decref(meta->pages[p_0]);
+      meta->pages[p_0] = NULL;
+
+      meta->greatest_deleted_page++;
+      used_pages = meta->greatest_allocated_page
+        - meta->greatest_deleted_page
+        + meta->greatest_refilled_page;
+      if ((used_pages) * PAGE_SIZE <= meta->size * MIN_USED_RATIO) {
+        *should_shrink = true;
       }
     }
 
