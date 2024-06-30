@@ -10,7 +10,7 @@ $\textrm{atw} \textrm{rgw} \textrm{rgr}$
 
 The bindings to the Python runtime are considered an implementation detail, and are not discussed here.
 They chiefly consist of mapping Python objects into C constructs, which is achieved with calls to Python's C-APIs.
-Another feature of Python's C-APIs that has been extensively used is garbage collection, which is discussed in \S\ref{sec:garbage-collection}.
+Another feature of Python's C-APIs that has been extensively used is garbage collection, which is discussed in \S\ref{subsec:garbage-collection}.
 
 
 \section{Design Overview}\label{sec:design-overview}
@@ -776,7 +776,7 @@ To implement a cost-efficient and consistent iteration seems to be possible, bas
 	\item When the iteration completes, it decrements the reference count of the pages in the local pages array, and frees the array.
 \end{enumerate}
 
-When the iteration field of a page is set (i.e.\ $\not\eq$ \texttt{NULL}), the page is considered to be immutable.
+When the iteration field of a page is set (i.e.\ $\neq$ \texttt{NULL}), the page is considered to be immutable.
 A thread that wishes to mutate it, should thus first copy the page's contents into a newly allocated page, and then atomically swap the two pages in the pages array.
 If the swap fails, then it means that another thread has swapped the page into a mutable page: it cannot be that the newly swapped-in page is immutable because that requires holding all of the accessors' locks.
 
