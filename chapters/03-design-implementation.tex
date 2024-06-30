@@ -491,7 +491,43 @@ The \texttt{ExpectedUpdateEntry} sub-routine, which is also employed as a sub-ro
 
 \subsection{Linearization}\label{subsec:insert-linearization}
 
+The presented \texttt{ExpectedInsertOrUpdate} operation is linearizable.
+
+A successful insertion linearizes upon the insertion of the new node into the index (note that a data table entry for an insertion is prepared beforehand, and possibly cleaned up later if deemed unnecessary, that is, if the routine turned into an update).
+Before that happens, concurrent lookups and deletes have no visibility on the data table entry which hosts the yet-to-be inserted key, since their search is based on a hash lookup on the index before looking into the data table.
+After it happens, either with a successful CAS on line 56 (non-compact) or equivalently with a successful CAS inside the compact sub-routine,\footnote{%
+	A call to \texttt{ExpectedInsertOrUpdateCloseToDistance0} essentially boils down to a laborious computation, before picking the right value with which to call CAS.
+	Thus, externally it can be observed to behave in much the same way as a non-compact insertion.
+} concurrent lookups will see the new node, and visit the pointed-to data table entry, successfully finding the key.
+
+Pertaining concurrent iterations (described later in Sections~\ref{sec:iterations} and~\ref{sec:consistent-iteration}), which mainly focus on reading the data table, the linearization point thus described still holds.
+When an iteration visits an entry, it additionally checks for the relevant node in the index to be present and if it is not, then it avoids yielding that value.\footnote{%
+	Which is done by re-using the \texttt{LookupEntry} sub-routine described later in~\S\ref{sec:delete}.
+}
+
+
 \subsection{Lock-freedom}\label{subsec:insert-lock-freedom}
+
+The described \texttt{ExpectedInsertOrUpdate} is lock-free, inasmuch as it does not trigger a grow migration.
+
+As mentioned earlier, we maintain the lock-freedom property only for those operations that don't necessitate for migrations to complete.
+As described, this is because the implementation of completely lock-free hash tables is deemed impractical.
+Whereas migrations are not concerned, this routine is indeed lock-free: no thread's arbitrary delay can arbitrarily delay this routine as well.
+Later, we will not specify this caveat of lock-freedom holding only when no migrations are in progress; such is also a caveat sustained by Maier et al.\ in~\cite{maier}.
+
+\texttt{ExpectedInsertOrUpdate} is not wait-free.
+An insert may in fact be delayed in several points:
+\begin{enumerate}
+	\item when making a reservation in the data table;\footnote{%
+		Which is not shown, for brevity, in Listing~\ref{lst:insert}.
+	}
+	\item when failing to make use of the insert quick-path of line 25;
+	\item when the CAS inside the \texttt{ExpectedInsertOrUpdateCloseToDistance0} sub-routine fails, due to the index nodes involved being contended;
+	\item when a non-compact node fails to be inserted on line 56, again due to contention on the index position;
+	\item when a concurrent update or deletion changes the already-present key (thus, this would be an update, rather than an insert); and
+	\item when the check on line 103--104 fails, due to another thread changing the index state to non-compact.
+\end{enumerate}
+Note that the delays here mentioned do not cause obstruction for a running \texttt{ExpectedInsertOrUpdate}, which remains lock-free, notwithstanding the concurrency issues listed above.
 
 
 \section{Delete}\label{sec:delete}
@@ -940,6 +976,7 @@ To implement a cost-efficient and consistent iteration seems to be possible, bas
 		Given that there will be need to store some data per iterator, it may be that the iteration ID is the pointer to this alleged C structure.
 	}
 	\item it allocates a new local pages array of the same size of the used portion of the data table's pages array;
+	\item it allocates a new local index and copies the shared index into it;
 	\item it traverses the \texttt{AtomicDict}'s pages array, and for each page:
 	\begin{enumerate}
 		\item it sets the \texttt{iteration} field on the page to $i$;
