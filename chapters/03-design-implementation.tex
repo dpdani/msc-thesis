@@ -555,7 +555,7 @@ Given that atomically setting a key's value to \texttt{NULL} is such a simple op
 
 The swapping for a tombstone node is fairly simple and is shown in lines 33--36 of Listing~\ref{lst:delete}.
 Recall that doing this swap instead of simply deleting the node is necessary, as already described in~\S\ref{subsec:lazy-robin-hood}, and in~\cite[\S6.4]{the-art-vol-2}.
-In our circumstances, is especially useful in order to help concurrent lookups: the thread looking up a key $k$ may very well visit the data table entries pertaining to the visited nodes in the index, possibly finding that $k$ had been deleted by reading that its associated value $\eq$ \texttt{NULL}.
+In our circumstances, is especially useful in order to help concurrent lookups: the thread looking up a key $k$ may very well visit the data table entries pertaining to the visited nodes in the index, possibly finding that $k$ had been deleted by reading that its associated value $=$ \texttt{NULL}.
 But reading a data table entry is much more costly than reading a node in the index, given that the index nodes are much smaller in size compared to a data table entry; and that the next node index to visit is very likely to already be in the processor's cache, and the entry likely isn't.
 
 The \texttt{LookupEntry} routine, omitted for brevity, is essentially equivalent to the \texttt{Lookup} routine shown in Listing~\ref{lst:lookup}, but instead of looking for a node that points to an entry that contains the searched key, it looks for a node that points to a certain fixed location of the data table; thus it is an operation that only involves reading the index.
@@ -678,6 +678,9 @@ It follows that the presented deletion is not wait-free.
 
 
 \section{Migrations: growth, shrinking, and compaction}\label{sec:migrations}
+
+
+
 
 \subsection{Linearization}\label{subsec:migration-linearization}
 
