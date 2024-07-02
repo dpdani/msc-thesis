@@ -113,11 +113,11 @@ Let us extend this concept by including other operations as well.
 We will collectively refer to migrations and other kinds of operations that break the lock-freedom of the hash table as \emph{synchronous operations}, described later in~\S\ref{subsec:synchronous-operations}.
 The essential characteristic is that their implementation may be greatly simplified by not allowing concurrent lock-free access; both from the perspective of computational costs, or maintenance costs.
 
-Maier's hashmap implementation has an important difference when compared with Python's dictionary.
+Maier's hash table implementation has an important difference when compared with Python's dictionary.
 In the latter, the least-significant bits of the hash are used to determine the position in the linear array; that is, $d_0(x) = x \mod 2^s$, with $s$ being the logarithm base-2 of the dictionary size.
 While in the former, the most-significant bits are used: $d_0(x) = x \gg (64 - s)$, where $\gg$ is a right-shift operation.
 
-A reasoning as to why Python's hashmap chose this scheme can be found in~\cite{dict-comment-hash}:
+A reasoning as to why Python's hash table chose this scheme can be found in~\cite{dict-comment-hash}:
 \begin{quote}
 	In a table of size $2^i$, taking the low-order i bits as the initial table index is extremely fast, and there
 	are no collisions at all for dicts indexed by a contiguous range of ints.
@@ -125,7 +125,7 @@ A reasoning as to why Python's hashmap chose this scheme can be found in~\cite{d
 \end{quote}
 On the other hand, the reason why Maier chose the right-shift based scheme is so that the relative position of two keys which are in the same probe doesn't change as much as in the alternative, when the array is resized.
 That is, consider a key $x$ s.t. $h(x) \mathbin{\&} 2^{s + 1} = 0$, and a key $y$ s.t. $h(x) \mathbin{\&} 2^{s + 1} = 1$.
-If they were colliding before resizing from $s$ to $s + 1$ (i.e. $h(x) \mathbin{\&} 2^s - 1 = h(y) \mathbin{\&} 2^s - 1$), they will not collide in the corresponding hashmap of size $s + 1$.
+If they were colliding before resizing from $s$ to $s + 1$ (i.e. $h(x) \mathbin{\&} 2^s - 1 = h(y) \mathbin{\&} 2^s - 1$), they will not collide in the corresponding hash table of size $s + 1$.
 But this creates an unexpected problem.
 It is trivial to see that the distance-0 after the migration $d_0'(x) = d_0(x)$.
 The $d_0$ position of $y$ will have changed from $d_0(y) = h(y) \mathbin{\&} 2^s-1$ to $d_0'(y) = h(y) \mathbin{\&} 2^{s+1}-1$.
@@ -138,9 +138,10 @@ In other words, $d_0'(y) = d_0(y) \cdot 2 + 1$.
 While $d_0(x) = h(x) \gg (64 - s)$, and $d_0'(x) = h(x) \gg (64 - s - 1) \Rightarrow d_0'(x) = d_0(x) \cdot 2$.
 
 It follows that the nodes of a cluster in the prior array will ``stay close to each other'' in the new array.
-This behavior enables avoiding the necessity to exercise care in the moving of nodes from one generation of the hashmap to the next, resulting in much less synchronization overhead.
+This behavior enables avoiding the necessity to exercise care in the moving of nodes from one generation of the hash table to the next, resulting in much less synchronization overhead.
 
-Though, given this fundamental difference in picking the hash bits to determine the position in the hashmap, it was necessary to re-hash Python-generated hashes, or else the $d_0$ position of very many objects would be $0$.
+Though, given this fundamental difference in picking the hash bits to determine the position in the hash table, it was necessary to re-hash Python-generated hashes, or else the $d_0$ position of very many objects would be $0$.
+In fact, the usage of the most-significant bits scheme is a core assumption for proving~\cite[Lemma~5.1]{maier}.
 This is done with a cheap CRC32 hardware instruction, that Maier also used in his implementation.
 Thus, the required property of hashes being ``\emph{large} pseudo-random numbers,'' is respected.
 
@@ -379,17 +380,6 @@ For the sake of discussing the running time complexity of our routine, we will m
 Do note that in the \texttt{ReadEntry} sub-routine the key is always read before the value.
 This avoids the problem of torn-reads, exactly as described in~\cite[\S4, Lookup]{maier}.
 
-\lstinputlisting[
-	numbers=left,
-	stepnumber=5,
-	numberfirstline=true,
-	language={C},
-	caption={Lookup Operation},
-	label={lst:lookup}
-]{listings/lookup.c}
-
-\subsection{Linearization}\label{subsec:lookup-linearization}
-
 Towards the end of Listing~\ref{lst:lookup}, at lines 68--94, is where the response is written into an externally allocated C \texttt{struct}.
 See how on line 69 the eventuality that the compact state of the hash table has changed is taken into account.
 Suppose the check on line 69 didn't exist, and consider two threads $t_1$ and $t_2$ executing respectively a lookup for key $k$ and an insert for the same key.
@@ -400,7 +390,10 @@ There can exist an execution s.t.:
 	\item $t_1$ runs again, not finding the node pertaining to $k$, thus returning a lookup failure.
 \end{enumerate}
 
-Instead of this evidently faulty behavior, the check on line 69 makes the lookup restart from the beginning, so that item (3) above would be substituted ``$t_1$ at first not finding $k$, sees that a non-compact insertion could have linearized, undermining its assumption that the Robin Hood invariant holds, and thus restarts from line 7, eventually finding $k$.''
+Instead of this evidently faulty behavior, the check on line 69 makes the lookup restart from the beginning, so that item (3) above would be substituted with
+\begin{enumerate}
+	\item[3.] $t_1$ at first not finding $k$, sees that a non-compact insertion could have linearized, undermining its assumption that the Robin Hood invariant holds, and thus restarts from line 7, eventually finding $k$.
+\end{enumerate}
 
 Another similar check can be found on lines 72 and 79, where concurrent migrations are considered.
 It is important to note that lookups are permitted to run concurrently with migrations, as they are read-only operations.
@@ -408,6 +401,18 @@ When a concurrent migration from the generation of \texttt{meta} to a newer gene
 	This is actually implemented with an atomic event, so that threads that are waiting for the migration to finish are awaken.
 } it is possible that a subsequent insert (potentially the one that initiated the migration) for the same key as the lookup operation linearizes before the lookup operation completes, in a manner similar to the previously discussed compactness of the hash table.
 In this case, the $d_0$ position of the key must also be recomputed.
+
+
+\lstinputlisting[
+	numbers=left,
+	stepnumber=5,
+	numberfirstline=true,
+	language={C},
+	caption={Lookup Operation},
+	label={lst:lookup}
+]{listings/lookup.c}
+
+\subsection{Linearization}\label{subsec:lookup-linearization}
 
 Other than the two cases described, the successful lookup linearizes on line 41, where the key is read.
 Failed lookups, i.e.\ lookups that don't find the searched key, linearize on line 15, where a node is read from the index.
@@ -677,14 +682,125 @@ If the same key $k$ is continuously deleted and re-inserted by threads other tha
 It follows that the presented deletion is not wait-free.
 
 
-\section{Migrations: growth, shrinking, and compaction}\label{sec:migrations}
+\section{Migrations}\label{sec:migrations}
 
+When the hash table becomes too full ($\approx 2/3$ used slots), or too empty ($\approx 1/3$ used slots), it becomes necessary to perform a migration.
+At its core, such is necessary because it is not possible to simply add more slots into an array after it has been allocated; and the index and data table pages array are in fact regular arrays.
+Thus, in order to allow for more keys to be inserted, or for memory to be reclaimed, it is necessary to substitute the aforementioned arrays.
 
+\texttt{AtomicDict} allows for three kinds of migrations: \emph{grow}, \emph{shrink} and \emph{compact}.
+Respectively, they allow
+\begin{enumerate}
+	\item to enlarge the maximum possible size of the key-set,
+	\item to reduce it, and
+	\item in contrast with the other two, to recover the Robin Hood invariants, which may have been lost due to our Lazy Robin Hood approach, described in~\S\ref{subsec:lazy-robin-hood}.
+\end{enumerate}
+The three kinds are slightly different from each other in their implementation, but are externally signalled in the same manner: by setting a field in the current metadata to show that there is a migration in progress.
 
+In fact, most of the \texttt{AtomicDict} data is stored inside its metadata, which holds references to the index, and to the data table, among other useful things.
+An external observer may perceive a migration as a change from a prior metadata object to a new one.
+We will also refer to them as the current generation metadata and its successor, or the new generation metadata.
 
-\subsection{Linearization}\label{subsec:migration-linearization}
+In addition to the aforementioned references, which are the core parts of a metadata objects, are also stored therein:
+\begin{enumerate}
+	\item the size of the hash table;
+	\item the pages counters (see~\S\ref{sec:approximate-size});
+	\item the \texttt{is\_compact} flag;
+	\item various information about the sizes of index nodes and their internal parts (see Table~\ref{tab:robin-hood-nodes});
+	\item a pointer to the next metadata generation;
+	\item the migration leader thread id;\footnote{%
+		This is a unique thread identifier assigned by calling Python's \texttt{\_Py\_ThreadId} API.
+		Internally, it uses various hardware- and platform-dependent calls to generate the number.
+		For instance on x86-64 hardware running Linux, the identifier is stored in the FS register and is a pointer (i.e.\ a number) to the thread's \texttt{pthread} struct, used primarily for fast access to its Thread Local Storage (TLS).
+		Refer also to the Linux Kernel Documentation, \S29.8.1, Common FS and GS usage.
+		Available online at \url{https://www.kernel.org/doc/html/next/x86/x86_64/fsgs.html#common-fs-and-gs-usage}, last accessed \today.
+	}
+	\item the next node to migrate counter;\footnote{%
+		Or, in Maier's terminology, the blocks counter.
+		The next node to migrate is effectively the first node in a block.
+	}
+	\item three atomic events used to signal the progress of the three phases of migrations;\footnote{%
+		One metadata's events are only used for the migration which sees it as the current generation.
+	} and
+	\item other miscellaneous information.
+\end{enumerate}
 
-\subsection{Non-lock-freedom}\label{subsec:migration-lock-freedom}
+The metadata object is stored inside an \texttt{AtomicRef}, described in detail in Appendix~\ref{ch:atomic-reference}.
+It essentially provides an interface for an atomically updatable reference to a \texttt{PyObject}, that also handles correct \texttt{PyObject} concurrent reference counting.
+Specifically, the objects stored therein are subject to QSBR,\footnote{Also see~\S\ref{subsec:qsbr}.} and thus are not immediately freed upon reaching a reference count of 0.
+This behavior is important for metadata objects, because it may be that a thread $t$ reads the pointer to the current metadata, and a concurrent migration replaces it with a newer generation, before $t$ manages to increment the metadata's reference count.
+Thus, not having QSBR for metadata objects would make the implementation of \texttt{AtomicDict} subject to use-after-free bugs.
+
+Mutation operations are blocked while a migration is in progress.
+This is done by starting a Synchronous Operation.
+The first phase of a migration is to prepare the new generation metadata.
+\begin{itemize}
+	\item In a shrink or compact migration, the metadata is ready after the leader thread allocates it, creates the new index, clears it (i.e.\ \texttt{memset(\ldots, 0, \ldots)}), allocates the new, smaller pages array, and copies the non-deleted pages into the new pages array.
+	\item In a grow migration, the metadata is ready after the leader thread allocates it, creates the new index, and copies the pages array into a new, larger pages array.
+\end{itemize}
+After the new generation metadata is ready, the follower threads may start migrating the nodes from the current generation to the new one.
+
+The Synchronous Operation is here ended by the leader thread for shrink and compact migrations, in order to allow new accessors to join the migration process.
+Whereas for grow migrations, this is not done, and instead the Synchronous Operation is ended only after the current generation metadata is swapped with the new one.
+The reason for this limitation is that the threads that participate in a grow migrations essentially need to hit a barrier and wait for all participants to have hit it.
+In order for this to work, we need to know in advance the amount of threads that will need to hit the barrier.
+Thus, we cannot allow the possibility of new accessors joining the migration process after it has started.
+This is not necessary for shrink and compact migrations because they use a different semantic in order to determine whether the migration has completed.
+Namely, that the generation tag of each page in the data table is set to the new generation.
+
+The application of a Synchronous Operation relieves the implementation from being concerned with the following problem, and its variations.
+\begin{enumerate}
+	\item A thread $t_i$ is performing an insertion of a key $k$.
+	\item Another thread $t_m$ is performing a migration to a newly allocated index.
+	\item $t_i$ reaches its linearization point before the migration completes.
+	\item Has $k$ been migrated?
+\end{enumerate}
+Instead, it becomes much easier to implement, and maintain, a logic in which thread $t_m$ initiates a Synchronous Operation, so that all other threads either complete their mutation before the migration starts, or know that a migration is in progress and help carry it out before resuming their work.
+This is effectively the same approach expressed in~\cite[\S5.3.2, Preventing Concurrent Updates to Ensure Consistency]{maier}.
+
+One may argue that, in principle, updates don't need to wait for a migration to complete, since all they need to do is to update a field in the relevant data table entry.
+Nevertheless, the update might need to be retried in case it returns that the searched key was not found, and if a concurrent migration completed in the meantime.
+Additionally, a migration might in fact leave the data table untouched only if it happened to be a grow migration.
+A compact, or shrink migration will instead try to reduce the size of the pages array of the data table, thus actually performing some operations on both the data table and the index.
+
+As it can be easily evinced from the above text the migration process is essentially split into shrinks and compacts, and grows.
+We refer to these two categories as slow and quick migrations henceforth.
+
+The slow migration is conceptually simpler than the quick counterpart: what chiefly happens is that migrating threads compete to lock data pages for themselves and migrate the valid entries therein, i.e.\ those entries that have not been deleted, into the new generation index.
+This is done by using the common insertion routine.
+After the migration of a page is completed, the thread that previously locked the page sets the page's generation to the new generation.
+To improve contention on the acquisition of pages, each thread, identified by the number $i$, starts migrating pages from the $i \mod P_A$ page.
+After having visited all of the pages, it runs a second visit to check if all of the pages' generations have been set to the new generation.
+If it does observe that, then it signals to the other accessors that the node migration phase is complete.
+
+During the quick migration instead, a participating thread sets a local ``participation'' flag to 1 when joining the migration process (initially set to 0 by the leader for all accessors).
+The node migration phase is then very similar to the one described in~\cite[\S5.3.1]{maier}.
+
+A global counter is kept in the current generation metadata that specifies the next node to migrate.
+A thread runs an atomic fetch-and-add operation to reserve a certain block,\footnote{%
+	By default, of size 4096, following the implementation of~\cite{maier}.
+	So that it is possible for a single thread to perform the entire migration process, if the current index size is sufficiently small.
+	In fact, the additional contention generated for smaller block sizes is not worth the blocking of the other threads.
+} i.e.\ a portion of index.
+After a block is reserved, the thread that made such reservation is free to not use atomic operations to migrate the nodes involved, because it effectively reserved both a portion in the current generation index, and in the new generation index.
+Consider a block in the current generation index that starts at position $a$ of size 4096, i.e.\ $[a, a + 4096]$.
+By~\cite[Lemma~5.1]{maier}, we know that the involved nodes must be migrated within the $[2a, 2(a + 4096 + 1)]$ block of the new generation index.
+That is, we only allow grow migrations to use a growth factor $\gamma = 2$.
+We therefore also know, that the reserved blocks being disjunct for all participating threads, due to the semantics of the atomic fetch-and-add operation employed,\footnote{%
+	I.e.\ $a$ being distinct among all participating threads.
+} the blocks of the new generation index will also be disjunct.
+Thus, there is no need for synchronization between migrating threads, other than the fetch-and-add operation.
+
+The migrating thread, having reserved a block, clears the relevant portion of the new generation index and proceeds with inserting the same nodes into the new generation index (i.e.\ nodes pointing to the same location in the data table, albeit possibly differently sized and at different positions), skipping over tombstone nodes, and trying to maintain the Robin Hood invariants, falling back to linear probing if that is not possible.
+Note that there not being a necessity to use 16-byte aligned CAS operations, the Robin Hood invariants are maintained to a larger extent, compared to the normal insertion routine.
+After being done, the participating thread sets its local ``participation'' flag to 2, signaling that it has finished its assigned portion of the work.
+Then, it visits all of the accessors to check if there is at least one whose ``participation'' flag is set to 1.
+If not, then the thread signals to all other participants that the node migration has completed.
+
+After the node migration completes, the leader thread, which may be the same thread that signaled the completion of the node migration phase, swaps the current metadata out for the new one and signals to the other threads the the migration has finished.
+This applies for both the quick and slow migrations.
+
+A call to the \texttt{compact} method triggers a compact migration, and such is the only mean to trigger a compact migration, but then, if the new generation meta is still not compact, further grow migrations are triggered, until a generation is reached s.t.\ the resulting meta is compact.
 
 
 \section{Approximate size}\label{sec:approximate-size}
@@ -694,7 +810,7 @@ Three separate, atomic counters are kept:
 
 \begin{itemize}
 	\item the greatest allocated page $P_A$;\footnote{%
-		This counter is also used to keep track of the used portion of the pages array, and is the one considered when a thread makes a new reservation into the data table.
+		This counter is also used to keep track of the used portion of the pages array, and is the one considered when a thread makes a new reservation into the data table; possibly, triggering the allocation of a new page.
 	}
 	\item the greatest deleted page $P_D$; and
 	\item the greatest refilled page $P_R$.
