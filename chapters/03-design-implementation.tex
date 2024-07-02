@@ -635,7 +635,7 @@ Notice how the necessity for defragmentation remains, in order to provide a fair
 Other mechanisms for triggering migrations that don't require defragmentation could have been adopted, but this one is particularly useful because it also makes iterations faster, by reducing the necessity of an iterating thread to visit empty entries of the fragmented data table.
 
 A way for the swapping operation to be carried out safely in spite of concurrent mutations was found.
-At first the deleted entry, already having value $\eq$ \texttt{NULL}, would be marked as entombed, so that successive unfinished modifications due to the swap mechanism would not be read as valid entries by other threads.
+At first the deleted entry, already having value $=$ \texttt{NULL}, would be marked as entombed, so that successive unfinished modifications due to the swap mechanism would not be read as valid entries by other threads.
 Then, a swapping entry would be looked for in the data table, at a lower-numbered location.
 The swapping entry would be flagged as such, so that no other concurrent delete may try to swap the same entry.
 Then, the key and value of the swapping entry would be copied to the deleted entry, whose entombed state would be kept.
