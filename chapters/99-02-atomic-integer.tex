@@ -1,23 +1,22 @@
 \chapter{Atomic Integer}\label{ch:atomic-int}
 
-This chapter discusses the concept, necessity, and design of an atomic integer for Python, especially, but not exclusively, in the context of the free-threading changes.
-
+This chapter discusses the concept, rationale, and design of an atomic integer for Python, especially, but not exclusively, in the context of the free-threading changes.
 The implementation discussed here is available in~\cite[src/cereggii/atomic\_int]{cereggii}.
 
 
 \section[The necessity before and after the free-threading changes]{The necessity before and after the free-\\threading changes}\label{sec:the-necessity-before-and-after-the-free-threading-changes}
 
-With the presence of the GIL, many concurrency problems that existed, and likely still exist, in Python code may never be observed.
+With the presence of the GIL, many concurrency problems that existed in Python code, and likely still exist, may never be observed.
 An atomically updatable integer is thus a very simple abstraction to ensure that certain concurrency problems are handled correctly.
 
 \begin{quote}
-    [...] There's currently no atomic int in Python and people go through all sorts of weird contortions to atomically count things (which often leads to broken code even with the GIL).\footnote{%
+    [\ldots] There's currently no atomic int in Python and people go through all sorts of weird contortions to atomically count things (which often leads to broken code even with the GIL).\footnote{%
     This quote is from a comment by Gross in a public online discussion, and is accessible at \url{https://discuss.python.org/t/towards-a-python-util-concurrent/41325/8}, last accessed \today.
 }
 \end{quote}
 
 Regardless of the Python build, a class of the likes of \texttt{AtomicInt} is still useful in Python's ecosystem.
-It can additionally gain usefulness in Python free-threading build because of the performance improvements that can be gained in specific design choices, as described later in Section~\ref{subsec:atomic-int-handles}.
+It can additionally gain usefulness in Python free-threading build because of the performance improvements that can be gained with specific design choices, as described later in Section~\ref{subsec:atomic-int-handles}.
 
 
 \section{Design}\label{sec:atomic-int-design}
@@ -46,14 +45,14 @@ Instead, a usage similar to the following would yield inconsistent results, assu
         i = i + 1
 \end{lstlisting}
 
-What happens in this case is that the value that \texttt{i} is holding, is first retrieved, in a manner similar to calling \texttt{{i.get()}}, the sum is performed, and then the result stored in \texttt{i}, similarly to calling \texttt{{i.set(\ldots)}}.
-These three actions comprising a mutation that employs two distinct methods of \texttt{AtomicInt}, it cannot be correctly executed without the protection of an external lock.
+What happens in this case is that the value that \texttt{i} is holding, is first retrieved, in a manner similar to calling \texttt{{i.get()}}, the sum is performed, and then the result is stored in \texttt{i}, similarly to calling \texttt{{i.set(\ldots)}}.
+These three actions comprising a mutation that employs two distinct methods of \texttt{AtomicInt}, cannot be correctly executed without the protection of an external lock.
 That is, the two methods being linearizable, does not entail that two successive calls to them are linearizable; in fact, the opposite is true.
 
 
 \subsection{Handles}\label{subsec:atomic-int-handles}
 
-It can easily be observed by profiling~\cite[examples/atomic_int/counter.py]{cereggii}\footnote{%
+It can easily be observed by profiling~\cite[examples/atomic\_int/counter.py]{cereggii}\footnote{%
     For instance, with a tool like Linux's \texttt{perf}, available online at \url{https://perf.wiki.kernel.org/index.php/Main_Page}, last accessed \today.
 } that the running time is vastly dominated ($\approx$99\%) by concurrent reference counting and other Python thread-safety features, with the atomic increment being such a cheap operation in comparison.
 
@@ -68,7 +67,7 @@ If the handle is created by the only thread that uses it, as it is intended, the
 }
 
 The same reference counting operations, thus performed by the object's owner thread, would be substantially cheaper.
-So much so, that the observed running time of~\cite[examples/atomic_int/counter.py]{cereggii} drops by a staggering $\approx$95\%.
+So much so, that the observed running time of~\cite[examples/atomic\_int/counter.py]{cereggii} drops by a staggering $\approx$95\%.
 
 During an exchange with Sam Gross, the main author of the free-threading changes, he had indeed confirmed that the added burden of concurrent reference counting here exhibited is likely to remain in the free-threading build of Python, for the foreseeable future.
 Furthermore, he was convinced that using this design of handle indirection can be effective in contrasting these performance bottlenecks.
@@ -80,7 +79,7 @@ Here is presented a possibility for future specialization of \texttt{AtomicInt}.
 To further reduce contention, it is possible to restrict the usage of \texttt{AtomicInt} and then optimize it, based on the restricted semantics.
 
 In fact, if the integer itself is used as a counter, a very common application, then it is possible for the $T$ threads accessing it to have $T$ distinct counters upon which to count in isolation with each other.
-Since additions are commutative, the $T$ counters can be summed together lazily, only when the value of the counter wants to be read, say by a \texttt{{counter.get()}} operation.
+Since additions are commutative, the $T$ counters can be summed together lazily, only when the program wants to read the value of the counter, say by a \texttt{{get()}} operation.
 The result might then be cached to avoid the repetition of work when the counter has not been changed.
 
 In principle, this can be achieved in a manner similar to \texttt{AtomicDict}'s scheme for consistent size retrieval, described in~\S\ref{sec:consistent-size}.
