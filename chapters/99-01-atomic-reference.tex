@@ -1,12 +1,85 @@
 \chapter{Atomic Reference}\label{ch:atomic-reference}
 
+Presented here is an atomically updatable reference to a Python object.
+That is, a reference that can be safely updated in spite of concurrent changes and deallocations.
+
+This was initially implemented in order to correctly handle the swapping of an \texttt{AtomicDict}'s internal metadata object (see~\S\ref{sec:migrations}), in a way that made use of Python's new QSBR scheme.
+Its usefulness extends beyond the internal structures of \texttt{AtomicDict}: since the problem solved is very simple, its applications can be numerous.
+
+The implementation described in this Chapter is publicly available at~\cite[src/cereggii/atomic\_ref.c]{cereggii}.
+
 
 \section{Design}\label{sec:design}
 
-$\rightarrow$ single field struct
+The design of \texttt{AtomicRef} closely resembles the interface of Java's \texttt{AtomicReference}: an \texttt{AtomicRef} Python object is an object that stores a single pointer to another Python object.
+(Regarding the slight name difference, the shortened \emph{ref} is more commonly used in Python, compared to \emph{reference}, both in reference counting C-APIs, and in other parts of the language.)
+The choice of following the Java interface comes down to two considerations: programmers who are already accustomed with Java's interface need not learn a new one, and this (atomically updating a reference) being such a relatively simple problem, it would seem hard to design something completely different from the rest of the world.
+
+The ``hard'' part of this design is to correctly use free-threading Python's QSBR scheme (see \S\ref{subsec:qsbr} for an introduction).
+Namely, in lines 23--25 of Listing~\ref{lst:atomic-ref} the read on line 24 is retried until the reference count increment succeeds on line 25.
+This is where serious bugs may occur in a faulty implementation.
+In fact, if incorrectly using QSBR, instead of failing a call to increment the reference count, it is possible that the memory pertaining to the fore-referenced object is freed, as that would be the effect of a concurrent \texttt{Decref} which sees the reference count reach 0.
+The exhibited behavior would thus be a segmentation fault, a so called use-after-free, instead of an increase in the running time (due to contention).
+A significantly worse possibility.
+
+\begin{lstlisting}[
+	caption={Pseudocode of \texttt{AtomicRef}'s core routines.},
+    label={lst:atomic-ref},
+    language=C,
+    numbers=left,
+	stepnumber=5,
+	numberfirstline=true,
+]
+    typedef struct {
+      PyObject_HEAD
+
+      PyObject *reference;
+    } AtomicRef;
+
+    int AtomicRef_CompareAndSet(self, expected, new)
+    {
+      Incref(new);
+      int success = CompareAndSet(&self->reference, expected, new);
+      if (success) {
+        Decref(expected);
+        return 1;
+      } else {
+        Decref(new);
+        return 0;
+      }
+    }
+
+    PyObject *AtomicRef_Get(self)
+    {
+      PyObject *reference;
+      do {
+        reference = self->reference;
+      } while (!TryIncref(reference));
+      return reference;
+    }
+\end{lstlisting}
 
 
-\section{Proof of correctness in nogil fork}\label{sec:proof-of-correctness-in-nogil-fork}
+\subsection{Single-Field Struct}\label{subsec:single-field-struct}
+
+An alternative design approach could have been not making \texttt{AtomicRef} a Python object.
+Instead, it would be turned into a single-field C struct, essentially removing line 2 of Listing~\ref{lst:atomic-ref}.
+This choice would slightly help the performance of \texttt{AtomicDict} as well, given that there are currently two indirections required to read the metadata object: one indirection to read \texttt{{dict->metadata}}, which is an \texttt{AtomicRef *}, and one indirection to read \texttt{{dict->metadata->reference}}, which is the actual \texttt{AtomicDict} metadata object.
+Ipso facto, as an improvement for \texttt{AtomicDict} it would be very marginal.
+Instead, if a user of this library would necessitate to manage several instances of \texttt{AtomicRef}, say, stored into a C array, access to each referenced object would be severely hindered by the double indirection.
+Furthermore, \texttt{AtomicRef} not being a Python object would entail that it would not be possible to expose this presented functionality into Python code.
+
+A possible approach to both gain further performance, and retain usability in Python code, would consist of using a single-field C struct for \texttt{AtomicRef}, as previously described, intended to be accessed from C shared library users, and also implementing a differently named Python type, say \texttt{AtomicRefObj}.
+The new Python type would itself be the container for a single-field C struct \texttt{AtomicRef}, thus essentially retaining equal functionality as the one presented elsewhere in this Chapter.
+
+This design proposal is inspired by the new \texttt{PyMutex} object of the original nogil fork, and of Python 3.13t.
+The advantage of using a single-field struct is that the program using \texttt{PyMutex} has no need to be aware of its internal representations, however simple they may be.
 
 
 \section{Issues with free-threading changes and proposed re-implementation}\label{sec:issues-with-free-threading-changes-and-proposed-re-implementation}
+
+During an exchange with Gross, he pointed out that the method employed for correct concurrent handling of reference counts differed in Python 3.13t, compared to his original \texttt{nogil} fork.
+Namely, that the \texttt{TryIncref} routine, shown above, would not behave in the same way, instead expecting the object to be in a \emph{weakrefs} state, as listed in~\cite[\S Biased Reference Counting]{pep703}.
+In order to correctly implement \texttt{AtomicRef} for Python 3.13, it will therefore become necessary to enforce that the objects referenced to by an \texttt{AtomicRef} to be at least in the \emph{weakrefs} state.
+The state transition needs to be carried out before a new reference is stored inside \texttt{AtomicRef}, i.e.\ before another thread may decrement the reference count, and then deallocate the object without using the QSBR slow path for deallocation.
+Upon applying this modification, it is expected that the current implementation will restore correctness, without compromising the overall, presented design.

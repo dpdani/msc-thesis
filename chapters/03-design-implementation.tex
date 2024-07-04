@@ -203,7 +203,7 @@ That also entails that the entries in the reservation buffers need to be changed
 
 \subsection{Synchronous Operations}\label{subsec:synchronous-operations}
 
-In abstract terms, the presence of the list of thread-local mutexes, described in the above Section, enables the creation of cuts in the execution of dictionary operations, inasmuch the acquisition of all the thread-local mutexes by one thread creates a distinction between the operations that happened before this circumstance and those that happened after it.
+In abstract terms, the presence of the list of thread-local mutexes, described in the above Section, enables the creation of cuts in the execution of dictionary operations, inasmuch as the acquisition of all the thread-local mutexes by one thread creates a distinction between the operations that happened before this circumstance and those that happened after it.
 
 This crucial characteristic, which is required e.g.\ for the re-ordering of data table entries, enables also many more usages.
 A few are described in the following sections.
