@@ -1,14 +1,113 @@
-\chapter{Review of the State of the Art}
+\chapter{Review of the State of the Art}\label{ch:review}
 
-\section{Maier's concurrent hash table}
+
+\section{Maier's concurrent hash table}\label{sec:maier-review}
 
 \cite{maier}
 
-\section{Bolt}
+In that work, Maier and his colleagues describe a table migration process that crucially eliminates most of the contention that can in principle arise from a migration.
+In contrast with the standard literature, see for instance~\cite[Figure~13.30]{art-mp}, the migration process described does not necessitate the acquisition of one or multiple locks by a single thread that then takes care of performing the resizing.
+In fact, in the entire~\cite[Chapter~13]{art-mp}, resizing (eq.\ migrating) is described only in terms of a ``stop-the-world'' operation.
+
+That a fully lock-free migration process is possible has been shown by Hesselink et al.\ in~\cite[\S3.5]{hesselink}.
+Notwithstanding the theoretical achievement, the practicality of such an approach can be subject to debate.
+A migration process, as described in~\cite{hesselink}, comprises $\Omega(n)$ atomic memory writes (CAS).
+Since an atomic write can be considered to be an order of magnitude more expensive than a normal write,\footnote{%
+	For instance Intel SkyLake's \texttt{lock cmpxchg8b} has a measured latency of 23 clock cycles, while a \texttt{mov} instruction from a register to memory has a latency of 2 cycles.
+	See~\cite[Intel Ice Lake and Tiger Lake]{x86-instruction-tables}.
+} it is easy to see how the cost of migrations quickly becomes unsustainable, as noted in~\cite{maier} as well:
+
+\begin{quote}
+	While [\ldots] lock-free dynamic linear probing hash tables are possible, there is no result on their practical feasibility.
+	Our focus is geared more toward engineering the fastest migration possible; therefore, we are fine with small amounts of locking, as long as it improves the overall performance.
+\end{quote}
+
+Maier's hash table implementation has an important difference when compared with Python's dictionary.
+In the latter, the least-significant bits of the hash are used to determine the position in the linear array; that is, $d_0(x) = x \mod 2^s$, with $s$ being the logarithm base-2 of the dictionary size.
+While in the former, the most-significant bits are used: $d_0(x) = x \gg (64 - s)$, where $\gg$ is a right-shift operation.
+
+A reasoning as to why Python's hash table chose this scheme can be found in~\cite{dict-comment-hash}:
+\begin{quote}
+	In a table of size $2^i$, taking the low-order i bits as the initial table index is extremely fast, and there
+	are no collisions at all for dicts indexed by a contiguous range of ints.
+	So this gives better-than-random behavior in common cases, and that's very desirable.
+\end{quote}
+On the other hand, the reason why Maier chose the right-shift based scheme is so that the relative position of two keys which are in the same probe doesn't change as much as in the alternative, when the array is resized.
+That is, consider a key $x$ s.t. $h(x) \mathbin{\&} 2^{s + 1} = 0$, and a key $y$ s.t. $h(x) \mathbin{\&} 2^{s + 1} = 1$.
+If they were colliding before resizing from $s$ to $s + 1$ (i.e. $h(x) \mathbin{\&} 2^s - 1 = h(y) \mathbin{\&} 2^s - 1$), they will not collide in the corresponding hash table of size $s + 1$.
+But this creates an unexpected problem.
+It is trivial to see that the distance-0 after the migration $d_0'(x) = d_0(x)$.
+The $d_0$ position of $y$ will have changed from $d_0(y) = h(y) \mathbin{\&} 2^s-1$ to $d_0'(y) = h(y) \mathbin{\&} 2^{s+1}-1$.
+In other words, $d_0'(y) = d_0(y) + 2^s$.
+
+The problem with this behavior is that the position in the new array cannot be safely determined by looking at the prior array, without reading the actual hashes of each key in a probe.
+
+This problem is avoided by choosing the most-significant bits scheme: $d_0(y) = h(y) \gg (64 - s)$, and $d_0'(y) = h(y) \gg (64 - s - 1)$.
+In other words, $d_0'(y) = d_0(y) \cdot 2 + 1$.
+While $d_0(x) = h(x) \gg (64 - s)$, and $d_0'(x) = h(x) \gg (64 - s - 1) \Rightarrow d_0'(x) = d_0(x) \cdot 2$.
+
+It follows that the nodes of a cluster in the prior array will ``stay close to each other'' in the new array.
+This behavior enables avoiding the necessity to exercise care in the moving of nodes from one generation of the hash table to the next, resulting in much less synchronization overhead.
+
+
+\section{Bolt}\label{sec:bolt}
 
 \cite{bolt}
 
-\section{Python's sequential hash table}
+
+Consider the general situation in which a new item is being inserted.
+Paraphrasing from~\cite{robin-hood}:
+\begin{quote}
+	Suppose that element $A$ is at location $l$, at distance $d_a$ from its distance-0 slot, and $B$ is to be inserted (or moved).
+	Suppose $B$ has been denied allocation of its first $d_b - 1$ choices and we are now considering $l$, its $d_b$th choice.
+\end{quote}
+
+Then, the Robin Hood invariant, or heuristic, maintains that:\footnote{
+	As put by Celis et al. in~\cite{robin-hood}:
+	\begin{quote}
+		This procedure of ``taking from the rich and giving to the poor'' gives rise to the name Robin Hood hashing.
+		Like Robin Hood, it does not change the average wealth (mean probe length), only its distribution.
+		It is clear that the principal effect is to substantially reduce the variance.
+	\end{quote}
+}
+
+\begin{tabular}{rp{8cm}}
+	if $d_a \geq d_b$: & $A$ retains $l$, the insertion of $B$ continues by considering its $(d_b + 1)$st choice; \\
+	if $d_b > d_a$: & $B$ displaces $A$ from $l$, the insertion procedure for $A$ is applied starting with its next $(d_a + 1)$st choice; \\
+\end{tabular}
+
+
+\section{Python's sequential hash table}\label{sec:python-dict-review}
+
+This improves on both the storage space and the iteration speed.
+In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $\sim(1 - F_r)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
+Instead, there will be $\sim(1 - F_r)$ empty $O(8)$-bytes slots in the index, while the keys and value pairs will be stored in a separate compact table.
+That is, the data table will have a fill ratio of $\sim$100\%.
+Thus, when iterating over the keys in the dictionary, the compact data table will serve as the basis for the iteration, instead of the sparse index.
+Also, note that the size of index nodes will vary depending on the size of the key set: when the key set is small there is no need to index the data table with 64-bit numbers, instead the size of nodes is chosen dynamically, from a lower bound of 1-byte, when the cardinality of the key set is $\leq 64$.
+As the set of keys becomes larger than the maximum allowed fill ratio (i.e.\ $2/3$, both in \texttt{dict} and \texttt{AtomicDict}), then the migration process is initiated, which does not usually touch the data table, but only the smaller index instead.
+The data table is only modified when it needs to be reduced after a large number of deletes, which are supposedly modest in number.
+
+\paragraph{Python-generated hash values.}
+The hash functions generated for built-in CPython data types enjoy the following properties:
+\begin{enumerate}
+	\item objects which compare equal have the same hash value;
+	\item one object always produces the same hash value;
+	\item the computed hashes distribution is uniform, for a uniformly distributed set of values to be hashed;
+	\item their running time complexity is $O(1)$;
+	\item they don't necessitate holding locks, nor doing I/O, or whatever may be generally considered improper for a hash function\@.
+\end{enumerate}
+The reader may soon notice how these properties are generally true for all hash functions, with properties (1) and (2) being fundamental for whatever hashing scheme to work, properties (4), and (5) being trivial for all hash functions known in the literature, and property (3) being what is usually the concern behind the implementation of hash functions.
+
+With hash functions being so foundational to the implementation of hash tables, it is important to make one explicit remark.
+There is no guarantee, that can be afforded, that the hash functions we indirectly employ enjoy these properties too.
+That is to say, a hash function written in Python code may perform whatever arbitrary operation.
+For instance, it may very well acquire a lock, initiate a request to a remote machine on the network, read a large file from disk, or run an $O(n!)$ algorithm to produce the result.
+
+Of course, such behaviors would be completely unexpected of a hash function.
+Nevertheless, given their arbitrary nature, it is impossible to provide any sensible commentary on their enjoyment of the above properties.
+We will therefore resort to assume that those properties hold, as we have no control over those functions.
+
 
 \subsection{With nogil/free-threading changes}
 

@@ -22,6 +22,17 @@ An account of the free-threading changes.
 \cite{gross-doc}
 \cite{mimalloc}
 
+\paragraph{Thread identifiers.}
+This is a unique thread identifier assigned by calling Python's \texttt{\_Py\_ThreadId} API\@.
+Internally, it uses various hardware- and platform-dependent calls to generate the number.
+For instance on x86-64 hardware running Linux, the identifier is stored in the FS register and is a pointer (i.e.\ a number) to the thread's \texttt{pthread} struct, used primarily for fast access to its Thread Local Storage (TLS).
+Refer also to the Linux Kernel Documentation, \S29.8.1, Common FS and GS usage.
+Available online at \url{https://www.kernel.org/doc/html/v6.9/arch/x86/x86_64/fsgs.html}, last accessed \today.
+
+\paragraph{\texttt{PyMutex}.}
+
+\paragraph{\texttt{PyEvent}.}
+
 \subsection{Concurrent, biased reference counting}\label{subsec:concurrent-biased-reference-counting}
 
 \cite{biased-refcounting}
