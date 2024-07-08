@@ -79,6 +79,12 @@ Then, the Robin Hood invariant, or heuristic, maintains that:\footnote{
 
 \section{Python's sequential hash table}\label{sec:python-dict-review}
 
+
+\cite{hettinger-dict}
+\cite{dict-notes}
+\cite{dict-comment-design}
+\cite{dict-comment-hash}
+
 This improves on both the storage space and the iteration speed.
 In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $\sim(1 - F_r)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
 Instead, there will be $\sim(1 - F_r)$ empty $O(8)$-bytes slots in the index, while the keys and value pairs will be stored in a separate compact table.

@@ -19,7 +19,7 @@ The ``hard'' part of this design is to correctly use free-threading Python's QSB
 Namely, in lines 23--25 of Listing~\ref{lst:atomic-ref} the read on line 24 is retried until the reference count increment succeeds on line 25.
 This is where serious bugs may occur in a faulty implementation.
 In fact, if incorrectly using QSBR, instead of failing a call to increment the reference count, it is possible that the memory pertaining to the fore-referenced object is freed, as that would be the effect of a concurrent \texttt{Decref} which sees the reference count reach 0.
-The exhibited behavior would thus be a segmentation fault, a so called use-after-free, instead of an increase in the running time (due to contention).
+The exhibited behavior would thus be a segmentation fault, a use-after-free, instead of an increase in the running time (due to contention).
 A significantly worse possibility.
 
 \begin{lstlisting}[
