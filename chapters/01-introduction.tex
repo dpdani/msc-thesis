@@ -111,6 +111,7 @@ In fact, the set of attributes of a Python object may be altered at runtime, thu
 
 An exploration on the usages of the built-in hash table has been carried out and presented in~\S\ref{sec:dict-metrics}.
 For a discussion on \texttt{dict}'s design, refer to~\S\ref{sec:python-dict-review}.
+For a more thorough explanation of the common usages of CPython's \texttt{dict}, refer to~\cite[\S Principal Use Cases for Dictionaries]{dict-notes}.
 
 
 \section{Free-threading Python}\label{sec:free-threading}
@@ -121,7 +122,7 @@ It thus simplified significantly the implementation of the CPython interpreter o
 The limitation does not affect \emph{all} CPython-interpreted programs, in the sense that several programming paradigms do not make use of multi-threading regardless of the GIL, and are thus not actually impacted by its presence.
 Examples of these paradigms are, except from obviously single-threaded programs:
 \begin{enumerate}
-    \item co-routines-based concurrency, where a set of co-routines are executed concurrently and scheduled by the interpreter (or library); and
+    \item co-routines-based concurrency, where a set of co-routines are executed concurrently and scheduled by the interpreter (or a library); and
     \item multiprocessing-based concurrency, where the separate strands of execution are offloaded from a main CPython process to a set of child CPython processes, each having their own GIL; therefore, making use of the multiple processors available in the system.
 \end{enumerate}
 

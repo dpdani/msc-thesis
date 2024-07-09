@@ -1,6 +1,160 @@
 \chapter{Review of the State of the Art}\label{ch:review}
 
 
+\section{Python's sequential hash table}\label{sec:python-dict-review}
+
+Python's built-in hash table, already introduced in~\S\ref{sec:dict-intro}, is a sequential hash table with important ramifications inside the CPython interpreter.
+
+This Section provides an in-depth examination of CPython's \texttt{dict}, highlighting its design principles and operational mechanisms.
+One notable optimization is key sharing, which significantly reduces memory consumption by storing the set of keys separately from their associated values, the reason for this is explained later.
+
+Furthermore, the compact dictionary design, proposed by Raymond Hettinger, has significantly improved the previous implementation by optimizing the overall layout for enhanced performance and space utilization.
+
+
+\subsection{Key Sharing}\label{subsec:key-sharing}
+
+Recall that CPython uses hash tables to store the attributes of objects (see~\S\ref{sec:dict-intro}).
+It is immediate to see that different instances of the same class will generally have the same keys in their hash tables.
+A relatively simple optimization is thus to store the set of keys separately.
+
+This optimization is only applied for those hash tables that are used for class instances.
+When creating a \texttt{dict} directly in Python code, CPython will not create a hash table with key sharing.
+
+This creates slight performance overhead, compared to using a combined table for keys and values.
+Indeed, data locality is slightly diminished, an important factor for cache access optimization.
+It was measured, though, that the overall decrease in memory usage, more than compensated for this loss of locality; see~\cite[\S Performance, Speed]{pep412}.
+
+Further details are available in Shannon's proposal~\cite{pep412}.
+
+
+\subsection{Compact Dictionary}\label{subsec:compact-dict}
+
+In late 2012, Raymond Hettinger proposed a compact, ordered implementation of CPython's \texttt{dict}, in~\cite{hettinger-dict}.
+The design, which is still \texttt{dict}'s main design as of the time of writing (refer to~\cite{dict-comment-design}), is based on the observation that the previous hash table design was memory-inefficient.
+He noted that the table in which the items were stored, was unnecessarily wide: it required 24 bytes for storing the key pointer, the value pointer, and the hash value.
+In combination with the necessity of keeping the table sufficiently sparse (in order to cope with collisions), it generated a large amount of unused space.
+
+He instead proposed having two separate tables: one sparse table, called the index, and another, dense table, called the entries table, which the index table refers to.
+Insertion order is preserved because iterations read the entries table, and new items are appended to that table, following insertion order.
+The actual hash table is the sparse index, which can fit into two cache lines for tables of size $m \leq 128$.
+
+To further reduce memory usage, the size of index slots will vary depending on the size of the key set: when the key set is small there is no need to index the entries table with 64-bit numbers.
+Instead, the slot size is chosen dynamically, from a lower bound of 1-byte, when $m \leq 128$, to a maximum of 8 bytes for very large hash tables.
+
+In order to accomodate Key Sharing (see above~\S\ref{subsec:key-sharing}), the entries table may be further split into a key table (which also contains hashes of keys), and a values table.
+
+Splitting the sparse index table from the dense entries table, improves on both the storage space and the iteration speed.
+In fact, if we call $\alpha$ the load factor of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $(1 - \alpha)m$ empty 24-bytes entries for the unused slots in the hash table.
+Instead, there will be $(1 - \alpha)m$ empty $O(8)$-bytes slots in the index.
+That is, the entries table will have a load factor of $\sim$100\% (entirely filled, except for deleted entries).
+When iterating over the keys in the dictionary, the dense entries table will serve as the basis for the iteration, instead of the sparse index.
+Thus, reading unoccupied slots is avoided, and the memory bandwidth required for an iteration is reduced.
+
+As the set of keys becomes larger than the maximum allowed load factor (i.e.\ $\alpha_{\max} = 2/3$; both in \texttt{dict} and \texttt{AtomicDict}), then the resizing process is initiated, which does not modify the entries table, but only the smaller index.
+(Resizing is also termed as \emph{migrating} in the literature.)
+CPython's \texttt{dict} does not reduce its size after a large-enough sequence of deletions, that is, $\nexists\alpha_{\min}$.
+
+CPython takes a controversial approach to hashing, quoting from~\cite{dict-comment-hash}:
+\begin{quote}
+	Major subtleties ahead:  Most hash schemes depend on having a ``good'' hash function, in the sense of simulating randomness.
+	Python doesn't:  its most important hash functions (for ints) are very regular in common cases:
+	\begin{verbatim}
+		>>>[hash(i) for i in range(4)]
+	  	[0, 1, 2, 3]
+	\end{verbatim}
+	This isn't necessarily bad!
+	To the contrary, in a table of size $2^i$, taking the low-order $i$ bits as the initial table index is extremely fast, and there are no collisions at all for dicts indexed by a contiguous range of ints.
+	So this gives better-than-random behavior in common cases, and that's very desirable.
+\end{quote}
+
+
+\paragraph{Python-generated hash values.}
+The hash functions employed for built-in CPython data types enjoy the following properties:
+\begin{enumerate}
+	\item objects which compare equal have the same hash value;
+	\item one object always produces the same hash value;
+	\item the computed hashes distribution is uniform, for a uniformly distributed set of values to be hashed;
+	\item their running time complexity is $O(1)$;
+	\item they don't necessitate holding locks, nor doing I/O, or other operations which may be generally considered improper for a hash function.
+\end{enumerate}
+The reader will probably have noticed how these properties are generally true for all hash functions, with properties (1) and (2) being fundamental for any hashing scheme to work, properties (4), and (5) being trivial for all hash functions known in the literature, and property (3) being what is usually the concern behind the implementation of hash functions.
+
+With hash functions being so foundational to the implementation of hash tables, it is important to make one explicit remark.
+There is no guarantee, that can be afforded, that the hash functions we indirectly employ (and that CPython's \texttt{dict} employs, too) enjoy the above properties.
+That is to say, a hash function written in Python code may perform whatever arbitrary operation.
+For instance, it may very well acquire a lock, initiate a request to a remote machine on the network, read a large file from disk, or run an $O(n!)$ algorithm to produce the result.
+
+Of course, such behaviors would be completely unexpected of a hash function.
+Nevertheless, given their arbitrary nature, it is impossible to provide any sensible commentary on their enjoyment of the above properties.
+We will therefore resort to assume that those properties hold, as we have no control over those functions.
+
+
+\subsection{With nogil/free-threading changes}\label{subsec:dict-free-threading}
+
+Without the GIL, concurrent accesses to a sequential hash table such as \texttt{dict} may yield inconsistent program states, and lead to interpreter crashes.
+Therefore, free-threading CPython requires that concurrent accesses to \texttt{dict} must be synchronized through a mutex.
+
+Size retrieval of a \texttt{dict} is exempt from this requirement, since the size field itself is maintained correct with the \texttt{dict}'s mutex, and is thus easily available for concurrent reading.
+
+Two operations are also partially exempt.
+They are:
+\begin{enumerate}
+	\item \texttt{{dict[key]}}, i.e.\ a lookup operation; and
+	\item reading the next value from a \texttt{dict} iterator, which is also implemented with a lookup operation.
+\end{enumerate}
+These two operations may optimistically run without locking the \texttt{dict}'s mutex, but are sometimes required to fall back to a slow path that requires locking.
+The slow path is executed when some mutation on the \texttt{dict} was performed.
+
+Let us consider two cases involving a lookup (or eq.\ an iteration), and another concurrent mutation.
+Note that concurrent mutations are always obstructed by other concurrent mutations, thus need no detailed discussion.
+
+\paragraph{Lookup and Update.}
+Suppose two threads $t_l$ and $t_u$ are respectively reading a key $k$ and updating its associated value $v$, in \texttt{dict} $H$.
+The following might happen:
+\begin{enumerate}
+	\item $t_u$ acquires the lock of $H$;
+	\item $t_l$ and $t_u$ find the position of $k$ in $H$;
+	\item $t_l$ reads $v$;
+	\item $t_u$ updates the value associated with $k$, from $v$ to $v'$;
+	\item $t_u$ decrements the reference count of $v$;
+	\item $t_u$ observes that $v$'s reference count is 0, and proceeds with a delayed free of $v$;
+	\item $t_l$ tries to increment $v$'s reference count, but fails (because it is 0);
+	\item $t_l$ falls back to the slow path and is obstructed in the acquisition of $H$'s lock (which $t_u$ still holds);
+	\item {\ldots}eventually{\ldots}
+	\item $t_u$ releases $H$'s lock;
+	\item w.l.o.g.\ assume that $t_l$ acquires the lock (it may be that another thread acquires it first, but later releases it, giving $t_l$ another chance to acquire it, infinitely often);
+	\item $t_l$ restarts the lookup operation, and finds the position of $k$ in $H$;
+	\item $t_l$ reads $v'$;
+	\item $t_l$ successfully increments the reference count of $v'$ (in fact, the count could not be 0, because $v'$ is still referenced by $H$, and no mutations can happen in $H$ while $t_l$ is holding its lock);
+	\item $t_l$ releases the lock of $H$, and returns $v'$.
+\end{enumerate}
+
+\paragraph{Lookup and Resize.}
+Suppose two threads $t_l$ and $t_i$ are respectively reading a key $k$ and inserting another key $k'$, in \texttt{dict} $H$.
+The following might happen:
+\begin{enumerate}
+	\item $t_i$ acquires the lock of $H$;
+	\item $t_l$ finds the position of $k$ in $H$;
+	\item $t_l$ reads $v$;
+	\item $t_i$ notices that the current load factor $\alpha$ of $H$ is too high to perform the insertion;
+	\item $t_i$ resizes $H$;
+	\item $t_l$ notices that a concurrent resize has happened (let us avoid explicating how this check is performed);
+	\item $t_l$ falls back to the slow path and is obstructed in the acquisition of $H$'s lock (which $t_i$ still holds);
+	\item {\ldots}eventually{\ldots}
+	\item $t_i$ inserts $k'$;
+	\item $t_i$ releases $H$'s lock;
+	\item w.l.o.g.\ assume that $t_l$ acquires the lock;
+	\item $t_l$ restarts the lookup operation, and finds the position of $k$ in $H$;
+	\item $t_l$ reads $v$;
+	\item $t_l$ successfully increments the reference count of $v$;
+	\item $t_l$ releases the lock of $H$, and returns $v$.
+\end{enumerate}
+
+As it can be seen from the above correct executions, CPython's \texttt{dict} does not exhibit the natural parallelism mentioned in~\cite[Chapter 13]{art-mp}: operations on distinct keys generate contention.
+Not just contention actually: they generate obstructions.
+Furthermore, this applies to \emph{any} two or more keys, differently from a fine-grained locking scheme like the one described in~\cite[\S13.2.2]{art-mp}.
+
+
 \section{Maier's concurrent hash table}\label{sec:maier-review}
 
 \cite{maier}
@@ -49,10 +203,30 @@ While $d_0(x) = h(x) \gg (64 - s)$, and $d_0'(x) = h(x) \gg (64 - s - 1) \Righta
 It follows that the nodes of a cluster in the prior array will ``stay close to each other'' in the new array.
 This behavior enables avoiding the necessity to exercise care in the moving of nodes from one generation of the hash table to the next, resulting in much less synchronization overhead.
 
+The hash table of~\cite{maier} is limited to integer keys and values.
+This is too severe a limitation for a Python hash table: it would in fact not be possible to directly handle ``C integers'' from Python code.
+
+In their work, Maier et al.\ note that it is possible to generalize their hash table to complex keys and values (see~\cite[\S5.7]{maier}).
+In order for Python code to interact with this limited hash table, the keys and values would need to be cast to Python \texttt{int} types.
+While possible in principle, it also would entail a performance decrease, since the \texttt{int} objects themselves would be contended, even between lookups.
+In fact, at any given time there can exist one CPython \texttt{int} for any integer number, and there cannot exist two CPython \texttt{int} objects that store the same value.
+It follows that two concurrent lookups over the same key $k$, assuming there are no other concurrent operations on $k$, would necessarily content on the reference count of the associated \texttt{int} object, generated from the C integer stored in the hash table.
+It would make no difference to store the \texttt{int} pointers themselves in the hash table.
+The idea of storing a signature (i.e.\ the hash of the key) can in fact help reduce cache misses.
+
+The remarks on memory management for efficient complex keys and values in~\cite[\S5.7]{maier}, are very resembling of mimalloc's approach to sharded, thread-free lists, described in~\cite{mimalloc}.
+
 
 \section{Bolt}\label{sec:bolt}
 
 \cite{bolt}
+
+As put by Celis et al.\ in~\cite{robin-hood}:
+\begin{quote}
+	This procedure of ``taking from the rich and giving to the poor'' gives rise to the name Robin Hood hashing.
+	Like Robin Hood, it does not change the average wealth (mean probe length), only its distribution.
+	It is clear that the principal effect is to substantially reduce the variance.
+\end{quote}
 
 
 Consider the general situation in which a new item is being inserted.
@@ -62,14 +236,7 @@ Paraphrasing from~\cite{robin-hood}:
 	Suppose $B$ has been denied allocation of its first $d_b - 1$ choices and we are now considering $l$, its $d_b$th choice.
 \end{quote}
 
-Then, the Robin Hood invariant, or heuristic, maintains that:\footnote{
-	As put by Celis et al. in~\cite{robin-hood}:
-	\begin{quote}
-		This procedure of ``taking from the rich and giving to the poor'' gives rise to the name Robin Hood hashing.
-		Like Robin Hood, it does not change the average wealth (mean probe length), only its distribution.
-		It is clear that the principal effect is to substantially reduce the variance.
-	\end{quote}
-}
+Then, the Robin Hood invariant, or heuristic, maintains that:
 
 \begin{tabular}{rp{8cm}}
 	if $d_a \geq d_b$: & $A$ retains $l$, the insertion of $B$ continues by considering its $(d_b + 1)$st choice; \\
@@ -77,50 +244,10 @@ Then, the Robin Hood invariant, or heuristic, maintains that:\footnote{
 \end{tabular}
 
 
-\section{Python's sequential hash table}\label{sec:python-dict-review}
-
-
-\cite{hettinger-dict}
-\cite{dict-notes}
-\cite{dict-comment-design}
-\cite{dict-comment-hash}
-
-This improves on both the storage space and the iteration speed.
-In fact, if we call $F_r$ the fill ratio of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $\sim(1 - F_r)$ amount of empty 16-bytes entries, for the unused slots in the hash table.
-Instead, there will be $\sim(1 - F_r)$ empty $O(8)$-bytes slots in the index, while the keys and value pairs will be stored in a separate compact table.
-That is, the data table will have a fill ratio of $\sim$100\%.
-Thus, when iterating over the keys in the dictionary, the compact data table will serve as the basis for the iteration, instead of the sparse index.
-Also, note that the size of index nodes will vary depending on the size of the key set: when the key set is small there is no need to index the data table with 64-bit numbers, instead the size of nodes is chosen dynamically, from a lower bound of 1-byte, when the cardinality of the key set is $\leq 64$.
-As the set of keys becomes larger than the maximum allowed fill ratio (i.e.\ $2/3$, both in \texttt{dict} and \texttt{AtomicDict}), then the migration process is initiated, which does not usually touch the data table, but only the smaller index instead.
-The data table is only modified when it needs to be reduced after a large number of deletes, which are supposedly modest in number.
-
-\paragraph{Python-generated hash values.}
-The hash functions generated for built-in CPython data types enjoy the following properties:
-\begin{enumerate}
-	\item objects which compare equal have the same hash value;
-	\item one object always produces the same hash value;
-	\item the computed hashes distribution is uniform, for a uniformly distributed set of values to be hashed;
-	\item their running time complexity is $O(1)$;
-	\item they don't necessitate holding locks, nor doing I/O, or whatever may be generally considered improper for a hash function\@.
-\end{enumerate}
-The reader may soon notice how these properties are generally true for all hash functions, with properties (1) and (2) being fundamental for whatever hashing scheme to work, properties (4), and (5) being trivial for all hash functions known in the literature, and property (3) being what is usually the concern behind the implementation of hash functions.
-
-With hash functions being so foundational to the implementation of hash tables, it is important to make one explicit remark.
-There is no guarantee, that can be afforded, that the hash functions we indirectly employ enjoy these properties too.
-That is to say, a hash function written in Python code may perform whatever arbitrary operation.
-For instance, it may very well acquire a lock, initiate a request to a remote machine on the network, read a large file from disk, or run an $O(n!)$ algorithm to produce the result.
-
-Of course, such behaviors would be completely unexpected of a hash function.
-Nevertheless, given their arbitrary nature, it is impossible to provide any sensible commentary on their enjoyment of the above properties.
-We will therefore resort to assume that those properties hold, as we have no control over those functions.
-
-
-\subsection{With nogil/free-threading changes}
-
-\section{DRAMHiT}
+\section{DRAMHiT}\label{sec:dramhit}
 
 \cite{dramhit}
 
-\section{On the feasibility of completely lock-free hash tables}
+\section{On the feasibility of completely lock-free hash tables}\label{sec:on-the-feasibility-of-completely-lock-free-hash-tables}
 
 \cite{hesselink}
