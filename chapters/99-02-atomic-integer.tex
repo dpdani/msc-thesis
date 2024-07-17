@@ -63,7 +63,7 @@ The \texttt{AtomicInt} object does not necessitate being referenced directly by 
 An \texttt{AtomicIntHandle} is an object that internally keeps a pointer to the \texttt{AtomicInt} object that it semantically references to.
 Externally, it provides exactly the same APIs as \texttt{AtomicInt}, so that using or not the handle does not require substantial changes to a program's code.
 If the handle is created by the only thread that uses it, as it is intended, then it enjoys the fast-path for concurrent reference counting implemented in free-threading Python.\footnote{%
-    See~\S\ref{subsec:concurrent-biased-reference-counting}.
+    See~\S\ref{sec:concurrent-biased-reference-counting}.
 }
 
 The same reference counting operations, thus performed by the object's owner thread, would be substantially cheaper.

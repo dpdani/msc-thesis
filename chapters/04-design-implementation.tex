@@ -637,7 +637,7 @@ In addition to the aforementioned pointers, which are the core parts of metadata
 The metadata object is stored inside an \texttt{AtomicRef}, described in detail in Appendix~\ref{ch:atomic-reference}.
 It essentially provides an interface for an atomically updatable reference to a \texttt{PyObject}, that also handles correct \texttt{PyObject} concurrent reference counting.
 Specifically, the objects stored therein are subject to QSBR, and thus are not immediately freed upon reaching a reference count of 0.
-See~\S\ref{subsec:qsbr} for a discussion on QSBR\@.
+See~\S\ref{sec:qsbr} for a discussion on QSBR\@.
 This behavior is important for metadata objects, because it may be that a thread $t$ reads the pointer to the current metadata, and a concurrent migration replaces it with a newer generation, before $t$ manages to increment the metadata's reference count.
 Thus, not having QSBR for metadata objects would make the implementation of \texttt{AtomicDict} subject to use-after-free bugs.
 

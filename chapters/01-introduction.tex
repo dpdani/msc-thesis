@@ -6,74 +6,53 @@
 A hash table is a data structure that stores a set of distinct elements, called \emph{keys}, and associates with each of them a \emph{value}.
 A \emph{{hash function}} $h(k)$ is used to determine a unique position for each key $k$ in an array of \emph{buckets} (or \emph{slots}), in which the desired key-value association can be found.
 An \emph{ideal} hash function assigns each key to a unique slot, but such functions are very hard to find.
-Quoting from~\cite[\S6.4]{the-art-vol-2}:
-\begin{quote}
-    Functions that avoid duplicate values are surprisingly rare, even with a fairly large table.
-    For example, the famous ``birthday paradox'' asserts that if 23 or more people are present in a room, chances are good that two of them will have the same month and day of birth!
-    In other words, if we select a random function that maps 23 keys into a table of size 365, the probability that no two keys map into the same location is only 0.4927 (less than one-half).
-\end{quote}
-The occurrence of multiple keys having the same hash is called a \emph{collision} (e.g.\ in the ``birthday paradox,'' two people having the same birthday is a collision).
+The occurrence of multiple keys having the same hash is called a \emph{collision}.
 The mechanism with which a hash table handles collisions is called \emph{{collision resolution}}.
-Hash tables support common operations, which are executed in expected constant time (in most implementations):
+
+Hash tables support common operations, which are executed in expected constant time:
 \begin{enumerate}
-    \item an \texttt{insert} creates a new (non-previously-existing) association of a key to a value;
-    \item an \texttt{update} replaces the value associated with a certain key with a new value;
-    \item a \texttt{delete} removes a key-value association; and
-    \item a \texttt{lookup} returns the value associated with a certain key.
+    \item an \emph{insert} creates a new (non-previously-existing) association of a key to a value;
+    \item an \emph{update} replaces the value associated with a certain key with a new value;
+    \item a \emph{delete} removes a key-value association; and
+    \item a \emph{lookup} returns the value associated with a certain key.
 \end{enumerate}
 
 Implementations of hash tables are generally distinguished by their choice of hash function and of collision resolution.
 Common implementation of hash tables include:
 \begin{itemize}
-    \item open addressing, where items are placed in an array of slots, and collisions are resolved by displacing an item into the next available slot (often treating the array as circular), i.e.\ if a collision occurred at slot $x$, then the next available slot is $f(x)$, and it may be computed by:
+    \item open addressing, where items are placed into an array of slots, and collisions are resolved by displacing an item at slot $x$ to the next available slot $f(x)$, which may be computed by:
     \begin{itemize}
-        \item linear probing, i.e.\ $f$ is a linear function (often $f(x) = x + 1$);
+        \item linear probing, i.e.\ $f$ is a linear function;
         \item double hashing, i.e.\ $f$ is another hash function, distinct from $h$; or
     \end{itemize}
-    \item separate chaining, also known as closed addressing, where items are placed into an array of buckets, i.e.\ linked lists, so that when a collision occurs at bucket $h(k)$, the colliding item is appended to bucket $h(k)$.
+    \item separate chaining, also known as closed addressing, where items are placed into linked lists called buckets and collisions are resolved by appending to the bucket.
 \end{itemize}
 
-\subsection{Applications of Hash Tables}\label{subsec:applications-of-hash-tables}
+\paragraph{Applications of Hash Tables}\label{par:applications-of-hash-tables}
 
 Hash tables are ubiquitous in computer programs.
 They are taught in entry level Computer Science courses, and form the basis of many programs.
 Common applications include: map-reduce systems, databases (notably, their indexing and aggregation capabilities), caching systems, and dynamic programming, among others.
 A characteristic common to these applications is that hash table access can dominate their execution time.
-Some examples where hash tables can dominate a program's running time include:
-\begin{enumerate}
-    \item a distributed system, comprising several nodes which compute a function (map) of some data, and then send it (reduce) into a node that combines the intermediate results received (the reduce part is dominated by hash table accesses);
-    \item a database aggregation (e.g.\ \texttt{{SELECT COUNT(*) FROM t GROUP BY k}}, for a SQL database);
-    \item a cache system used to reduce the cost of a network server, by responding with a previously-sent response; or
-    \item a table containing previously computed sub-problems of a dynamic programming problem (e.g.\ computing the 1024th fibonacci number, by knowing the 1023rd and 1022nd).
-\end{enumerate}
+
 
 \subsection{Concurrent Hash Tables}\label{subsec:concurrent-hash-tables}
 
-In a shared-memory concurrency environment, several threads can share information in a flexible and efficient way by sharing access to a hash table.
-In fact, hash tables can provide a form of \emph{natural} parallelism among the threads of execution, as worded in the introduction to~\cite[Chapter~13]{art-mp}:
+In a shared-memory concurrency environment, several threads can share information in a flexible and efficient way by sharing access to a common hash table.
+In fact, hash tables can provide a form of \emph{natural parallelism}, as worded in the introduction to~\cite[Chapter~13]{art-mp}:
 \begin{quote}
     [\ldots] We studied how to extract parallelism from data structures [\ldots] that seemed to provide few opportunities for parallelism.
     In this chapter we take the opposite approach.
     We study \emph{{concurrent hashing}}, a problem that seems to be ``naturally parallelizable'' or, using a more technical term, \emph{{disjoint--access--parallel}}, meaning that concurrent method calls are likely to access disjoint locations, implying that there is little need for synchronization.
 \end{quote}
 In other words, two threads accessing a shared hash table have little or no need for synchronization when accessing two distinct keys stored therein.
-The examples above can be restructured to make use of several threads of execution, respectively:
-\begin{enumerate}
-    \item the reducer node uses $t$ threads to receive the data from the other nodes, as data is received the thread involved mutates a hash table, which is shared among all threads;
-    \item the aggregation executor (say, a process) uses $t$ threads to send multiple, parallel, asynchronous requests to the disks that store the data, and then performs the aggregation on a shared hash table;
-    \item the cache system uses $t$ threads to handle the many requests coming from clients, which all lookup the request and its associated response from a shared hash table (if the request is not found locally, it is then forwarded to the server and the response is saved into the hash table);
-    \item the $n$th fibonacci number is computed in a very short time, by looking up the $n - 1$st and $n - 2$nd in the shared hash table, and if they are not found, two threads compute those fibonacci numbers in parallel, and write back their results into the table.
-\end{enumerate}
 
-In the following paragraphs of this Section, we provide some informal definitions for important properties of concurrent algorithms and data structures.
+In the following paragraphs of this Section, we provide some informal definitions for important properties of concurrent algorithms and data structures, drawing them from~\cite[]{art-mp}.
 
 \paragraph{Linearizability.}
 It is an important property of concurrent data structures: a method call carried out by a thread $t$, should be observable by any thread other than $t$, to have modified the state of the data structure instantaneously, at some moment between its invocation and response.
-(Adapted from~\cite[\S3.5]{art-mp}.)
-A formal definition is also given in~\cite[Definition~3.6.1]{art-mp}.
 
 \paragraph{Lock-freedom and wait-freedom.}
-Herlihy and Shavit in~\cite[\S3.7]{art-mp}, define lock-freedom as:
 \begin{quote}
     A method is \emph{lock-free} if it guarantees that infinitely often \emph{some} method call finishes in a finite number of steps.
 \end{quote}
@@ -89,28 +68,28 @@ In terms of Amdahl's Law, the implication is that the sequential part of a progr
 \]
 
 The hash table design proposed in this Thesis is almost entirely lock-free.
-Some well-defined relaxations of the lock-freedom property are taken in this design, and elaborated in~\S\ref{subsec:maier}.
+Some well-defined relaxations of the lock-freedom property are taken in this design, and elaborated in Section~\ref{subsec:maier}.
 These relaxations are not a novel contribution.
 
 
 \section{Python and its Built-in Hash Table}\label{sec:dict-intro}
 
 Python is a popular, high-level programming language.
-It is dynamically typed and garbage-collected, and supports multiple programming paradigms, though it chiefly supports object-oriented programming.
+It is dynamically typed and garbage-collected, and it chiefly supports object-oriented programming.
 
 The CPython interpreter is the reference implementation of the Python language, and it is often confused for the language itself.
 Other implementations of Python exist, but are less popular.
 They are often specialized implementations that improve the performance of certain workloads.
 
 Python has a built-in hash table, named \texttt{dict}, that is considered an integral part of the language.
-It is a standard type, used in virtually \emph{every} Python program, either explicitly, by directly creating a \texttt{dict} instance (e.g. \texttt{{dict(k, v, \ldots)}}, or \texttt{\{k: v, \ldots\}}), or implicitly.
+It is a standard type, used in virtually \emph{every} Python program, either explicitly, by directly creating a \texttt{dict} instance, or implicitly.
 In fact, the CPython interpreter may create dictionaries in order to create an instance of a class (a very frequent operation in an object-oriented language).
 The attributes of an object are almost entirely stored in a hash table, which can also be accessed directly.
-(There exist exceptions; notably, classes defined with a \texttt{{\_\_slots\_\_}} attribute avoid creating a hash table upon instantiation, but restrict dynamic usages of their instances.)
+(There exist exceptions.)
 In fact, the set of attributes of a Python object may be altered at runtime, thus differing from the one specified in its class.
 
-An exploration on the usages of the built-in hash table has been carried out and presented in~\S\ref{sec:dict-metrics}.
-For a discussion on \texttt{dict}'s design, refer to~\S\ref{sec:python-dict-review}.
+An exploration on the usages of the built-in hash table has been carried out and presented in Section~\ref{sec:dict-metrics}.
+For a discussion on \texttt{dict}'s design, refer to Section~\ref{sec:python-dict-review}.
 For a more thorough explanation of the common usages of CPython's \texttt{dict}, refer to~\cite[\S Principal Use Cases for Dictionaries]{dict-notes}.
 
 
@@ -118,16 +97,16 @@ For a more thorough explanation of the common usages of CPython's \texttt{dict},
 
 A known limitation of the CPython interpreter (not the Python language) is the presence of a Global Interpreter Lock (GIL).
 This lock is used to protect the interpreter's internal state from concurrent mutations.
-It thus simplified significantly the implementation of the CPython interpreter over the years, at the cost of Python programs being often unable to efficiently use the multiple processors available in the system.
+It simplified significantly the implementation of the CPython interpreter over the years, at the cost of Python programs being often unable to efficiently use the multiple processors available in the system.
 The limitation does not affect \emph{all} CPython-interpreted programs, in the sense that several programming paradigms do not make use of multi-threading regardless of the GIL, and are thus not actually impacted by its presence.
-Examples of these paradigms are, except from obviously single-threaded programs:
+Examples of these paradigms are, except from obviously single-threaded programs include:
 \begin{enumerate}
-    \item co-routines-based concurrency, where a set of co-routines are executed concurrently and scheduled by the interpreter (or a library); and
-    \item multiprocessing-based concurrency, where the separate strands of execution are offloaded from a main CPython process to a set of child CPython processes, each having their own GIL; therefore, making use of the multiple processors available in the system.
+    \item co-routines-based concurrency, where a set of co-routines are executed concurrently and scheduled by the interpreter instead of the OS; and
+    \item multiprocessing-based concurrency, where the separate strands of execution are offloaded from a main CPython process to a set of child CPython processes, each having their own GIL\@.
 \end{enumerate}
 
 Many other programs, instead, cannot effectively cope with the presence of the GIL\@.
-Various times in the past GIL removals have been attempted~\cite{dabeaz-gil}~\cite[\S Related Work, Gilectomy]{pep703}~\cite[\S Related Work, PyParallel]{pep703}~\cite[\S Related Work, python-safethread]{pep703}.
+Various times in the past, GIL removals have been attempted:~\cite{dabeaz-gil}~\cite[\S Related Work, Gilectomy]{pep703}~\cite[\S Related Work, PyParallel]{pep703}~\cite[\S Related Work, python-safethread]{pep703}.
 The rationale behind these several attempts is always a variation of the same theme, quoting from~\cite{pep703}:
 \begin{quote}
     CPython's [GIL] prevents multiple threads from executing Python code at the same time.
@@ -141,209 +120,16 @@ It should be noted at this point that the addition of the GIL predates the popul
 At the time, it made a lot more sense to simplify the implementation of the interpreter (and still support multi-threading), rather than being capable of more performance, but almost never actually enjoy it.
 
 Free-threading Python (formerly known as nogil) is the latest attempt at removing the GIL\@.
-Initially carried out by Sam Gross, with the original reference implementation being a fork of Python 3.9, it is now in CPython's official codebase.
+Initially carried out by Sam Gross, it is now in CPython's official codebase.
 Python 3.13, the next release, is scheduled for October 2024 (the year of writing), and will feature an experimental build mode for free-threading Python.
 The build of Python 3.13 that will be commonly distributed, is referenced to as the \emph{default} build.
 
-The work presented later in this thesis is based on the original reference implementation, nogil, itself based on Python 3.9.
+The work presented later in this Thesis is based on the original reference implementation, nogil, itself based on Python 3.9.
 This choice was made because free-threading Python had not been implemented when the work for this thesis began in October 2023.
-A plan to port this work to Python 3.13 is described in~\S\ref{subsec:compatibility-with-3.13-free-threading}.
+A plan to port this work to Python 3.13 is described in Section~\ref{subsec:compatibility-with-3.13-free-threading}.
 
-What follows in this Section, is an account of the free-threading-related changes to the CPython interpreter.
-The ones described here seem to be fully implemented, with the remaining work, for the next release, primarily focused on resolving numerous, minor issues.
+What follows in the next Chapter, is an account of the free-threading-related changes to the CPython interpreter.
+The ones described here seem to be fully implemented, with the remaining work for the next release being primarily focused on resolving numerous, minor issues.
 
 Overall, free-threading is anticipated to result in a 6\% performance overhead for single-threaded executions and an 8\% overhead for multithreaded executions, with the higher overhead primarily due to the absence of optimizations available in single-threaded executions.
 (See the article on Gross' presentation at the 2023 Python Language Summit~\cite{python-summit-2023-nogil}.)
-
-
-\subsection{Concurrent, biased reference counting}\label{subsec:concurrent-biased-reference-counting}
-
-Concurrent reference counting is an implementation of reference counting that maintains correctness in multithreaded environments.
-Free-threading Python implements a design of concurrent reference counting based on the assumption that most objects are only accessed by the thread that created them.
-This bias towards the owner's reference counting does in fact turn out to be justified.
-This design is backed by the literature~\cite{biased-refcounting}.
-
-An object is therefore modified, in free-threading CPython, to store an owner thread identifier, an owner's reference count, and a shared reference count.
-The owner thread may use normal reads and writes when modifying its reference count, while the other threads must use atomic operations to modify the shared reference count, thus resulting in a slower path for reference counting.
-
-The shared reference count also stores the reference counting state, using two bits of the 4-byte count.
-An object may be in one of the following states:
-\begin{enumerate}
-    \item default;
-    \item weakrefs;
-    \item queued; or
-    \item merged.
-\end{enumerate}
-
-Their meaning are described in~\cite[\S Biased Reference Counting]{pep703}:
-\begin{quote}
-    The states form a progression: during their lifecycle, objects may transition to any numerically higher state.
-    Objects can only be deallocated from the ``default'' and ``merged'' states.
-    Other states must transition to the ``merged'' state before deallocation.
-    Transition states requires an atomic compare-and-swap on the [shared reference count] field.
-\end{quote}
-
-\paragraph{The ``default'' state.}
-Objects are initially created in this state (note that an object cannot, logically, be shared among multiple threads, before and during its instantiation).
-If the object was in fact not shared among threads, it will have remained in the ``default'' state, and can thus enjoy the quick deallocation path: upon reaching a reference count of 0, the object's memory is immediately freed (this is what happens to Python objects in the default build of CPython).
-
-\paragraph{The ``weakrefs,'' ``queued,'' and ``merged'' states.}
-Objects that are actually shared between threads during their lifecycle cannot use the quick deallocation path, as~\cite[]{pep703} states:
-\begin{quote}
-    [\ldots] The first time a non-owning thread attempts to retrieve an object in the ``default'' state it falls back to the slower locking code path and transitions the object to the ``weakrefs'' state.
-\end{quote}
-
-An object enters the ``queued'' state when a non-owning thread wishes to merge the two reference counts; that is, when the shared reference count becomes negative.
-The object is then enqueued in the owner's queue of objects to be merged.
-When the object enters the ``merged'' state, its owner thread field is reset, indicating that the object is not owned by any thread, and the owner's reference count is no longer used.
-When the shared reference count reaches 0, the object may be deallocated, when a quiescent state is reached (see~\S\ref{subsec:qsbr}).
-
-Note that this rarely happens, because (1) most objects are accessed by a single thread, and (2) it is rare for an object to have a negative shared reference count.
-
-Overall, the result of biased reference counting is that the impact of concurrent reference counting is greatly reduced; that is, most reference counting operations use the biased, faster path.
-
-
-\paragraph{Thread identifiers.}
-It logically follows from the above discussion that threads accessing CPython objects must be uniquely identified.
-Such is necessary, for instance, to determine whether the current thread is an object's owner.
-A unique thread identifier is computed by calling CPython's new \texttt{\_Py\_ThreadId} API\@.
-Internally, it uses various hardware- and platform-dependent calls to generate the number.
-For instance, on x86-64 hardware running Linux, the identifier is stored in the FS register.
-It is a pointer (i.e.\ a number) to the thread's \texttt{pthread} struct, used primarily for fast access to its Thread Local Storage (TLS).
-Refer also to the Linux Kernel Documentation, \S29.8.1, Common FS and GS usage.
-Available online at \url{https://www.kernel.org/doc/html/v6.9/arch/x86/x86_64/fsgs.html}.\footnote{Last accessed \today.}
-This API is also used in this thesis to elect the leader thread for a hash table migration.
-(See~\S\ref{subsec:migration-leader}.)
-
-
-\subsection{Deferred reference counting}\label{subsec:deferred-reference-counting}
-
-For some particular objects, it does not make sense to keep a consistent reference count.
-The object owner's reference count also stores two flags, used to indicate that the object is immortal, or that it can use deferred reference counting.
-W.r.t.\ immortal objects, the following is stated in~\cite[\S Immortalization]{pep703}.
-\begin{quote}
-    Some objects, such as interned strings, small integers, statically allocated PyTypeObjects, and the \texttt{True}, \texttt{False}, and \texttt{None} objects stay alive for the lifetime of the program.
-    These objects are marked as immortal [\ldots] [and] the \texttt{{Py\_INCREF}} and \texttt{{Py\_DECREF}} macros are no-ops for immortal objects.
-    This avoids contention on the reference count fields of these objects when multiple threads access them concurrently.
-\end{quote}
-
-Reference counts for some non-immortalized, contended objects may be deferred.
-Namely, for ``top-level functions, code objects, modules, and methods,'' because:
-\begin{quote}
-    These objects don't necessarily live for the lifetime of the program, so immortalization is not a good fit.
-\end{quote}
-
-In~\cite[\S Deferred Reference Counting]{pep703} Gross details an approach where instead of letting the interpreter increment and decrement those objects' reference counts as they are pushed to and popped from the evaluation stack, it instead skips those reference counting operations.
-It follows that their ``reference count fields no longer reflect their true number of references.''
-Instead, their true reference counts can only be safely computed during Garbage Collection (GC) pauses, and thus such objects can only be deallocated during a GC cycle.
-CPython's GC was designed to only collect objects that are part of reference cycles.
-It has thus been modified in order to also compute true deferred reference counts, and to collect those objects as well.
-
-This is not a general approach to deferred reference counting, and thus departs from the existing literature; cf.~\cite{deferred-refcounting}.
-
-
-\subsection{Quiescent State-Based Reclamation}\label{subsec:qsbr}
-
-An additional change to CPython for free-threading is QSBR\@.
-Although not directly referred to as QSBR, it was initially described in~\cite[\S Mimalloc Page Reuse]{pep703}, and later discussed in greater detail in the accompanying GitHub issue~\cite{qsbr}.
-CPython's implementation of QSBR closely follows Free BSD's implementation of Globally Unbounded Sequences, as noted by Gross in the referred issue.
-
-This mechanism serves to support lock-free read accesses to built-in data structures.
-When a thread $t_r$ optimistically avoids locking a shared \texttt{dict} $H$'s keys array, due to a read-only access, an unsafe circumstance may arise.
-If $H$ is resized (migrated) by another thread $t_m$ while $t_r$ is operating its read, it may be that $t_m$ frees $H$'s keys object before $t_r$ gets a chance to read it.
-This circumstance may arise while $H$'s reference count remains $> 0$, thus this problem does not pertain concurrent reference counting.
-
-In the above example, $t_m$ is not allowed to free the keys immediately, instead the following happens:
-\begin{enumerate}
-    \item there exist a global, monotonically increasing sequence number $S$, accessible to every thread $t \in T$;
-    \item $t_r$ is endowed with a local sequence number $S(t_r)$, which records the most recently observed value of the global $S$, say that in this execution $S(t_r)~=~S$;
-    \item $t_r$ begins the read-only access over $H$ (until the access ends, $t_r$ is not allow to change $S(t_r)$);
-    \item $t_m$ begins the resize (migration) of $H$;
-    \item $t_r$ and $t_m$ read the keys object $k$ (a pointer) associated with $H$;
-    \item $t_m$ creates a new keys object $k'$, and completes the resizing (migration of keys in $k$ to $k'$);
-    \item $t_m$ substitutes the key object associated with $H$, from $k$ to $k'$;
-    \item $t_m$ calls for a delayed free of $k$;
-    \item $t_m$ observes the value of the global $S$ sequence number;
-    \item $t_m$ adds a pointer to $k$ in a shared QSBR queue $Q$, and sets the QSBR goal $g$ for its deferred free to $g(k) = S + 1$;
-    \item $t_r$ completes its read;
-    \item $t_r$ increments its local sequence number, $S'(t_r) = S(t_r) + 1 = S + 1$;
-    \item \ldots\emph{eventually}\ldots
-    \item a thread $t_q$ (it may be that $t_q \equiv t_r \vee t_m \equiv t_m$) is in a quiescent state, because e.g.\ it is running a GC cycle;
-    \item $t_q$ observes that there exist a lower bound $\sigma$ to the sequence number of every thread $\min_{t \in T} S(t) \geq \sigma$;
-    \item if $\sigma < S + 1$, $k$ will not be freed ($g(k) > \sigma$);
-    \item if $\sigma \geq S + 1$, $k$ will be freed (and removed from $Q$).
-\end{enumerate}
-
-This is a generic mechanism that can help implement lock-free data structures.
-Note that thread-local (i.e.\ not shared) data structures are not affected by QSBR, and are instead immediately freed upon reaching a reference count of 0.
-
-
-\subsection{Changes to the memory allocator}\label{subsec:mimalloc}
-
-The described QSBR mechanism was located in the ``Mimalloc Page Reuse'' section of PEP~703 for a specific reason: it requires changes to CPython's memory allocator in order to work.
-In fact, the memory allocator employed so far in CPython, is not thread-safe.
-In order to allow allocations of objects without locking the entire interpreter, it was decided to change memory allocator entirely.
-
-The new allocator of choice is mimalloc, a general purpose allocator with good performance and thread-safety.
-It is described in detail in~\cite{mimalloc}.
-
-Some changes to mimalloc were necessary in order to support QSBR, essentially around restricting page reuse.
-When a mimalloc ``page'' ($\not\equiv$ an OS memory page) is empty, mimalloc may decide to reuse it for incoming allocation requests.
-Though, it may be that an empty page contains objects whose memory free operation was deferred, due to QSBR\@.
-Therefore, it would be unsafe to reuse the page for new objects.
-Instead, the following happens:
-\begin{enumerate}
-    \item a thread deletes an object, which happened to reside in mimalloc page $p$;
-    \item $p$ is now empty;
-    \item $p$ gets tagged with the global sequence number $S$ (described earlier in~\S\ref{subsec:qsbr}), s.t.\ $\tau(p)~=~S$;
-    \item $p$ may be reused when a later global sequence number $S' > \tau(p)$.
-\end{enumerate}
-
-Crucially, this modification to mimalloc ensures that threads which may still read an object in $p$ don't incur in so called use-after-free bugs.
-
-
-\subsection{Garbage collection}\label{subsec:python-gc}
-
-CPython's GC was also changed for the free-threading build to work.
-The changes are:
-\begin{enumerate}
-    \item running the GC during ``stop-the-world'' pauses, to restore thread-safety guarantees that were previously provided by the GIL;
-    \item collecting is non-generational; and
-    \item integrating with deferred reference counting and biased reference counting.
-\end{enumerate}
-
-To support ``stop-the-world'' pauses a status is assigned to each thread; one of ``attached,'' ``detached,'' or ``gc''.
-The ``attached'' and ``detached'' states follow the semantics that were previously assigned to the acquisition and release of the GIL\@.
-A thread that would previously acquire the GIL, transitions into the ``attached'' state; conversely, a thread that would previously release the GIL, transitions into the ``detached'' state.
-
-The GC thread transitions all other threads that were in the ``detached'' state into the ``gc'' state.
-Threads in the ``attached'' state are requested to pause themselves and transition to the ``gc'' state.
-When all threads are in the ``gc'' state, the GC thread starts the collection cycle.
-After being done, it transitions all threads in the ``gc'' state to the ``detached'' state, and notifies them.
-If a thread was in the ``detached'' state before entering the ``gc'' state, it ignores the notification.
-
-Note that ``stop-the-world'' pauses also implicitly create quiescent states (when all threads are in the ``gc'' state).
-The deterministic presence of quiescent states is required for QSBR to function without increasing overall memory usage.
-
-
-\subsection{Thread-safety of built-in data structures}\label{subsec:thread-safety-of-builtin-data-structures}
-
-Some operations on built-in data structures have always been atomic, due to the presence of the GIL\@.
-For instance, calling \texttt{{list(set)}} atomically creates a list from a set, because the GIL is held for the entire duration of the call.
-Most operations, though, are not thread-safe.
-
-The thread safety guarantees of built-in objects, implicitly provided by the GIL prior to the free-threading changes, is retained, as detailed in~\cite[\S Container Thread-Safety]{pep703}.
-Note that this does not mean that all operations on built-in data structures are thread safe.
-(In fact, an operation like \texttt{{my\_dict[key] += 1}} cannot be made thread-safe, in the same way a C instruction \texttt{{my\_counter++}} cannot be made thread-safe, without external synchronization.)
-Instead, Gross proposes to simply preserve the guarantees that were in place before the GIL was removed.
-
-To achieve this goal, CPython objects are endowed with a per-object mutex.
-When an operation that was previously thread-safe because of the GIL's presence is requested, the object involved is locked and the operation performed.
-Some operations further require that two objects are locked, e.g.\ \texttt{{list(set)}}.
-This is done by locking first the object whose memory address is lower, and then the other, to avoid deadlocks.
-
-A few operations have been selected to be executed without any locking, to improve performance.
-They are frequently-used, read-only operations on \texttt{list} and \texttt{dict} objects (e.g.\ \texttt{{my\_list[0]}}).
-Such operations may fall back to a slower path which acquires the involved objects' mutexes, in case the container objects were concurrently modified during the read operation.
-(This optimistic fast-path requires the changes to mimalloc described in~\S\ref{subsec:mimalloc}.)
-See also~\cite[\S Optimistically Avoiding Locking]{pep703}, for further details.

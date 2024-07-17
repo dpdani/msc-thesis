@@ -15,7 +15,7 @@ The design of \texttt{AtomicRef} closely resembles the interface of Java's \text
 (Regarding the slight name difference, the shortened \emph{ref} is more commonly used in Python, compared to \emph{reference}, both in reference counting C-APIs, and in other parts of the language.)
 The choice of following the Java interface comes down to two considerations: programmers who are already accustomed with Java's interface need not learn a new one, and this (atomically updating a reference) being such a relatively simple problem, it would seem hard to design something completely different from the rest of the world.
 
-The ``hard'' part of this design is to correctly use free-threading Python's QSBR scheme (see \S\ref{subsec:qsbr} for an introduction).
+The ``hard'' part of this design is to correctly use free-threading Python's QSBR scheme (see \S\ref{sec:qsbr} for an introduction).
 Namely, in lines 23--25 of Listing~\ref{lst:atomic-ref} the read on line 24 is retried until the reference count increment succeeds on line 25.
 This is where serious bugs may occur in a faulty implementation.
 In fact, if incorrectly using QSBR, instead of failing a call to increment the reference count, it is possible that the memory pertaining to the fore-referenced object is freed, as that would be the effect of a concurrent \texttt{Decref} which sees the reference count reach 0.
