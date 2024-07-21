@@ -264,6 +264,19 @@ The Robin Hood scheme was considered interesting nonetheless, because it especia
 In fact, with regular linear probing it is necessary to visit the entire probe before returning a failure, while in Robin Hood hashing, it is possible to prune the search by observing the distance of items in the probe.
 The approach taken to Robin Hood hashing by this author is presented in Section~\ref{subsec:lazy-robin-hood}.
 
+\paragraph{Performance under contention.}
+Contentious accesses are a common pattern in real-world usages of hash tables, as known in the literature.
+Bolt scheme of using fine-grained locking would seem especially subject to degradation in high-contention scenarios, as also noted by Kahssay himself.
+Let us compare the approaches of Maier et al.\ (\S8.4, ``Performance under contention'') and of Kahssay (\S7.4) in evaluating these scenarios.
+Differently from Maier, Kahssay only evaluates a Zipf distribution with a contention parameter $\theta = 0.75$.
+In a Zipf distribution it can be that $\theta \in [0, 2]$, which are the bounds considered by Maier.
+In fact, as noted by Maier, a little contention can help performance.
+The experiment evaluated by Kahssay comprises a workload of 90\% lookups and 10\% updates.
+In such a scenario, it happens that contention actually increases performance due to caching for 90\% of the workload.
+This scenario makes it unfeasible to properly compare Kahssay's and Maier's hash tables under contention.
+It would have been much more interesting to review a scenario with 100\% updates and varying contention parameter $\theta$, as shown in Maier's work.
+Without any distribution of Bolt, it is not possible to properly review its performance under contention.
+
 
 \section{DRAMHiT}\label{sec:dramhit}
 
