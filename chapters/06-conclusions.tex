@@ -4,20 +4,6 @@
 
 Apart from the work already described in Chapter~\ref{ch:design-and-implementation}.
 
-\subsection{Transactions}\label{subsec:transactions}
-
-\subsection{Compatibility with Python 3.13 (free-threading)}\label{subsec:compatibility-with-3.13-free-threading}
-
-\texttt{Py\_mod\_gil}
-
-\subsection{Compatibility with Python 3.13 (default build)}\label{subsec:compatibility-with-3.13-default-build}
-
-\subsection{Compatibility with other ISAs}\label{subsec:compatibility-with-other-isas}
-
-\subsection{Compatibility with Older Versions of Python}\label{subsec:compatibility-with-older-versions-of-python}
-
-\subsection{API Compatibility with built-in \texttt{dict}}\label{subsec:api-compatibility-with-dict}
-
 \subsection{\texttt{AtomicDictHandle}}\label{subsec:atomicdicthandle}
 
 A significant portion of the measured time involving \texttt{AtomicDict}'s methods pertains to concurrent reference counting.
@@ -90,8 +76,3 @@ Or alternatively, by following the current implementation of the interpreters qu
 Such restrictions should also \emph{only} be enforced for these particular use-cases, in order not to impose any restrictions on the keys and values for the use-cases not pertaining to sub-interpreters.
 
 With these enhancements, albeit quite a substantial amount of work to implement them, it becomes entirely possible to make use of the same \texttt{AtomicDict} implementation in both concurrency models: common multi-threading with free-threading, and isolated object spaces multi-threading with sub-interpreters.
-
-
-\subsection{\texttt{AtomicCounter}}\label{subsec:atomiccounter}
-\S\ref{sec:atomicshardedintcounter}
-API-compatible with \texttt{collections.Counter}
