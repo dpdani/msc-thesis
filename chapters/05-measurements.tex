@@ -1,12 +1,195 @@
 \chapter{Measurements}\label{ch:measurements}
 
+\epigraph{%
+    How often was he appalled by some shrub covered with snow, which, like a sheeted spectre, beset his very path!
+}{Washington Irving,\\The Legend of Sleepy Hollow}
 
-\section{Metrics on usage of Python's builtin hash table}\label{sec:dict-metrics}
+In this Chapter we run several experiments in order to back our previous claims and to shed some light on the consequences of the design and implementation choices made.
+Measuring the performance of the presented hash table has proven to be particularly difficult.
+The implementation's performance is measurably hindered by the constraints of the environment for which it was designed.
 
-\cite{dict-metrics}
+The results presented in this Chapter are entirely reproducible and available online.
 
-\section{Performance of hardware atomic operations}
+
+\section{Comparison with other reviewed hash tables}\label{sec:comparison-with-other-reviewed-hash-tables}
+
+In this Section we compare our hash table implementation with CPython's and Maier's hash tables.
+These are indirect comparisons with our hash table, which has very different constraints.
+Evaluating the effectiveness of our design and implementation is unfeasible to do directly.
+To do so would necessitate the independent development of two other concurrent hash tables for CPython, with different designs and implementations.
+There currently exist no such hash tables; meaning, we would need to develop them for the sole purpose of compiling this Chapter.
+The resources required to do so are well beyond those allocated for this entire Thesis.
+
+Given that a direct comparison is impractical, we resort to comparing our hash table with a sequential hash table (CPython's) and a non-object-oriented hash table (Maier's).
+These hash tables resp.\ don't need to consider naturally parallel accesses, or be generalized for any possible data type; ours has to entertain both features.
+The lack of these two constraints will be evident in the experiments that follow.
+
+Most of the 11 experiments presented here are drawn from the literature.
+Two experiments have been introduced by us, in order to show the performance of the iteration and batch lookup operations.
+
+\subsection{Experimental Methodology}\label{subsec:methodology}
+
+Before showing the results, we describe the way in which the experiments have been executed and how we measured their performance.
+We run each experiment in isolation and execute it five times, without running any other experiment concurrently.
+We pick the median-wall-clock time experiment to draw our observations from.
+At each run, we measure both the wall-clock time, and we sample the running time of the C functions which are called when executing the experiment's Python code.
+
+It would not be an effective choice to compute the average of the wall-clock times because we will also observe more detailed measures, which cannot be trivially averaged.
+
+We employ the Linux kernel's \texttt{perf} tool to sample the execution time of individual C functions.
+We do not trace a function's entire execution, since that would significantly alter the overall running time.
+Instead, the experiment's program is interrupted at a frequency of 10{kHz}, the current program counter is recorded for each thread, and the program is resumed.
+The recorded program counters are later associated with C functions.
+
+For the experiments related to Maier's hash table we don't either measure the wall-clock time, nor sample the underlying functions.
+This is because (1) we rely on the output of Maier's experiments to retrieve the wall-clock times, and (2) we assume that the share of time spent in the relevant hash table routines is close to 100\% of the output time (which is not the case when the measured program is executed by a software interpreter).
+
+To run our experiments we employed the original nogil fork, since it was the only option available at the time of implementing \texttt{AtomicDict}.
+This modified experimental interpreter evidently comes with some significant performance limitations.
+
+In virtually all experiments we can see that the running time is unexpectedly high, and by refining our measurements instrumentation with \texttt{perf} we can observe that the time actually spent executing \texttt{AtomicDict}'s routines is a small share, even if it is the system being tested.
+Notwithstanding the small amount of Python code pertaining to each experiment, it hides several implicitly executed C code.
+One should argue that the experiments should thus be written in C, but the C routines of \texttt{AtomicDict} are not easily exposed to other C extensions, at this time.
+Apart from this limitation, we also believe that the usage from Python code will be the predominant one, and therefore the limitations of this environment should be considered.
+
+\subsection{Results}\label{subsec:comparisons-results}
+
+Throughout the experiments we have observed a comparatively poor performance of \texttt{AtomicDict}, as measured in the number of operations completed per second.
+The performance of Maier's hash table, named Growt, is usually at least twice as high as \texttt{dict} and \texttt{AtomicDict}.
+We consider this to be caused by keys and values being of a fixed integer type.
+CPython's \texttt{dict}'s performance almost never scales with the number of threads, but is generally high.
+Compared with \texttt{dict} it is worth noting that while the performance may be worse, \texttt{AtomicDict} does guarantee the correctness of the output even in the face of concurrent mutations, while \texttt{dict}, crucially, does not.
+
+As expected, the throughput of the sequential hash table \texttt{dict} almost never scales with the number of threads across the experiments.
+Nevertheless, we find that it exhibits some other less trivial patterns for performance gain, as shown in the aggregation experiment in Figure~\ref{fig:aggregation}.
+For \texttt{dict}, the increasing skew of input data does not deteriorate performance, as is generally the case for concurrent hash tables, and instead improves it, due to the relevant data being more frequently found in the cache and the lack of contention caused by atomic operations.
+For \texttt{AtomicDict}, we can see that its throughput is roughly on par with \texttt{dict} when the skew is small, while contention, as expected, degrades performance.
+It is also possible to observe that the increase in skew from 0.25 to 0.95, increases the throughput for the Growt hash table as well, but does not increase it for \texttt{AtomicDict}.
+This is due to the increased contention on the reference counts of the keys in the table, whereas Growt does not need to deal with memory reclamation for its keys at all.
+We can expect these results to improve once the \texttt{reduce} method is implemented, as described in Section~\ref{subsec:reduce}: the number of atomic operations required to complete this experiment would be drastically reduced.
+
+\begin{figure}
+    \begin{centering}
+        \scalebox{0.4}{\input{figures/aggregation.pgf}}%
+        \scalebox{0.4}{\input{figures/aggregation_growing.pgf}}
+        \caption{The aggregation experiment. On the left, the hash tables were initialized with the expected final size. On the right, the hash tables had an initial size of~$\approx$0. The concurrent hash tables were used by 8 threads, while \texttt{dict} was used by 1 thread.}
+        \label{fig:aggregation}
+    \end{centering}
+\end{figure}
+
+\paragraph{Some effective design choices.}
+There are two experiments which we could not find in the literature, but which are frequent use-cases of hash tables in general: iterating over the currently-stored set of keys, and looking up a given set of keys instead of a single one.
+While Maier et al.\ mention the former use-case as ``Forall'' in their paper, they avoid producing an experiment.
+We additionally improve iterations by optionally providing partitioning between threads; refer to Section~\ref{subsec:iteration-partitioning} for further details.
+The latter is the design we proposed in Section~\ref{sec:batch-lookup} for amortizing memory access latencies.
+In Figure~\ref{fig:prepotenza} we can observe the effectiveness of our designs.
+
+On the left of the Figure, we can see that the iteration can scale almost linearly with the number of threads, and that it also exhibits a much higher throughput than \texttt{dict}'s iteration, even with a single thread-partition.
+
+On the right, we can observe that lookups in a batch can greatly improve their overall throughput with memory prefetching; in fact, even a batch size of 2 already shows higher throughput than \texttt{dict}'s lookups.
+We can also see that there exists a point of diminishing returns, in this case at a batch size of 64.
+This is due to cache poisoning, where the system's cache is too small and prefetched elements are evicted from the cache before they are actually read.
+
+\begin{figure}
+    \begin{centering}
+        \scalebox{0.4}{\input{figures/iteration.pgf}}%
+        \scalebox{0.4}{\input{figures/batch_lookup.pgf}}
+        \caption{Two experiments showing some effective design choices. On the right, the dashed lines represent the tables throughput without batching.}
+        \label{fig:prepotenza}
+    \end{centering}
+\end{figure}
+
+\paragraph{CPython 3.13.}
+We have attempted to use a release candidate of CPython 3.13.
+This required some slight modifications to our code, which may have altered the results.
+The \texttt{book} experiment was run with the updated interpreter and code, and it showed a decrease in performance.
+This was the only experiment we have been able to run, since most others rely on the \texttt{numpy} package which does not support this new CPython version, as of the time of writing.
+Given that we modified the code in a way that can impact performance, we should consider the results shown in Figure~\ref{fig:book-3.13} as inconclusive.
+However, we can notice a decrease in the single-threaded performance of \texttt{dict}, which we can confirm.
+
+\begin{figure}
+    \begin{centering}
+        \scalebox{0.4}{\input{figures/book.pgf}}%
+        \scalebox{0.4}{\input{figures/book-3.13.pgf}}
+        \caption{The \texttt{book} experiment. On the left as run with the nogil fork, on the right with the first release candidate of CPython 3.13.}
+        \label{fig:book-3.13}
+    \end{centering}
+\end{figure}
+
+\subsection{Reference Counting and Other Overheads}\label{subsec:measurements-overheads}
+
+There are several bottlenecks to multithreaded-performance scaling in free-threading Python.
+The major one is concurrent reference counting, in spite of the many improvements detailed in Chapter 2.
+In fact, the objects of interest for this Thesis are actively shared between threads, therefore our objects are always forced into the reference counting slow-paths.
+
+For instance, in the \texttt{lookup\_success} experiment, we can see that the time spent in our lookup routine is only approx.\ 25\% of the wall-clock time, while the rest is mostly spent in reference counting ($\approx28\%$), in the interpeter loop ($\approx13\%$), and in other miscellaneous CPython routines ($\approx26\%$).
+The reference counting for our internal data structures accounts for approx.\ 6\% of the wall-clock time.
+
+We have successfully addressed the issue of reference counting in the case of AtomicInt, a very simple concurrent integer implementation, detailed in Appendix~\ref{ch:atomic-int}.
+The strategy of using a thread-local proxy object was proved successful in almost eliminating the slow-paths taken for concurrent reference counting.
+During an exchange with Gross, he deemed this approach to be effective both for the nogil interpreter employed for the experiments, and for free-threading Python 3.13.
+%See measurement result in Appendix~\ref{ch:measurement-results} for further details.
+A similar strategy can also be applied to \texttt{AtomicDict}, in further developments.
+
+There are several other measurable bottlenecks, which we will only briefly mention.
+One of which is clearly the interpretation overhead: a Python program is simply input data for the CPython interpreter, which needs to be processed accordingly.
+
+Where the performance of CPython's built-in hash table is measured, we also observe some considerable time spent in mutex waiting; approx.\ 21\% of the wall-clock time in the \texttt{insert} experiment.
+That hash table is not lock-free, thus it needs to spend some time waiting for lock acquisition, temporarily idling the affected CPU cores.
+Our hash table is not subject to this hindrance.
+
+
+\section{Usage of CPython's built-in hash table}\label{sec:dict-metrics}
+
+In this Section we back with data our previous claims that:
+\begin{enumerate}
+    \item the distribution of the standard operations of hash tables is the one accepted in the literature:
+    \begin{enumerate}
+        \item 90\% lookups;
+        \item 9\% insertions;
+        \item 1\% deletions; and
+    \end{enumerate}
+    \item most lookups fail.
+\end{enumerate}
+
+\subsection{Methodology}\label{subsec:dict-metrics-methodology}
+
+Before showing the data, let us explain our methodology.
+In the online repository~\cite{dict-metrics}, we have slightly modified the CPython interpreter to collect metrics on its built-in hash table.
+Each routine and sub-routine has been modified to record the number of calls, and its running time.
+Additionally, some specific routines have also been altered to record their results; for instance, in the lookup routine, we recorded the number of times it returned a success or a failure.
+This modified interpreter was then employed to run the \texttt{pyperformance} benchmark suite.
+This is a suite of programs generally regarded as the standard for describing the performance of the CPython interpreter, as it evolves over time.
+It is, thus, the way in which the CPython core developers expect the interpreter to be used.
+We extrapolated the usages of the built-in hash table therein.
+
+For a lack of a better alternative, we will consider these metrics to be the same ones as for our concurrent hash table.
+In fact, it is possible to argue that a concurrent hash table would incur a different usage.
+While that may be so, such different usages can only be observed with a functioning concurrent hash table being widely adopted.
+That of course, is the objective of this Thesis, but sadly we cannot foresee those programs.
+We therefore can only resort to consider the sequential usages at the time of writing.
+
+Note that the modified CPython interpreter was the 3.11 release, because at the time of running those experiments the 3.12 version hadn't yet been released.
+The \texttt{pyperformance} suite though has not significantly changed since, so we can still make effective use of the collected metrics.
+
+\subsection{Results}\label{subsec:dict-metrics-results}
+
+CPython's dict is implemented over a total of 165 C functions, all of which are accounted for in~\cite{dict-metrics}.
+By inspecting the source code we can find that most functions are in fact specialized calls over generic sub-routines.
+We are interested in those that implement the lookup, insert, and delete operations, which are respectively \texttt{\_Py\_dict\_lookup}, \texttt{insertdict}, and \texttt{delitem\_common}.
+In fact, apart from an inspection of the relevant source code, we can find that the number of calls for these routines is greater than all the other semantically-similar routines.
+
+By inspecting data pertaining to these routines we can find that they have been called respectively \numprint{16730124560}, \numprint{804910551}, and \numprint{208639089} times, totalling \numprint{17743674200} calls.
+Their respective shares are thus approximately 94.3\%, 4.5\%, and 1.2\%, showing an even higher degree of skew towards lookups than expected in claim (1).
+
+We can see in~\cite{dict-metrics} that the generic lookup routine returned \numprint{3247042454} successes and \numprint{13483082106} failures out of the \numprint{16730124560} calls.
+Therefore, we can say that overall the expected ratios of lookup successes and failures are approximately ${19.4}\%$--${80.6}\%$, backing claim (2).
+
+
+\section{Performance of hardware atomic operations}\label{sec:performance-of-hardware-atomic-operations}
 
 \cite{cas-costs}
 
-\section{Comparison with other reviewed hash tables}
+All lock-free algorithms known in the literature can be useful only in so far as the hardware compare-and-set atomic instructions are available.
+Any lock-free hash table thus cannot have a throughput higher than that of those instructions.
+In this Section we try to measure an absolute upper bound to the performance of lock-free algorithms, by replicating the techniques existing in the literature.
