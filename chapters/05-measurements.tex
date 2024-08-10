@@ -184,12 +184,3 @@ Their respective shares are thus approximately 94.3\%, 4.5\%, and 1.2\%, showing
 
 We can see in~\cite{dict-metrics} that the generic lookup routine returned \numprint{3247042454} successes and \numprint{13483082106} failures out of the \numprint{16730124560} calls.
 Therefore, we can say that overall the expected ratios of lookup successes and failures are approximately ${19.4}\%$--${80.6}\%$, backing claim (2).
-
-
-\section{Performance of hardware atomic operations}\label{sec:performance-of-hardware-atomic-operations}
-
-\cite{cas-costs}
-
-All lock-free algorithms known in the literature can be useful only in so far as the hardware compare-and-set atomic instructions are available.
-Any lock-free hash table thus cannot have a throughput higher than that of those instructions.
-In this Section we try to measure an absolute upper bound to the performance of lock-free algorithms, by replicating the techniques existing in the literature.
