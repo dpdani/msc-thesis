@@ -60,13 +60,15 @@ We consider this to be caused by keys and values being of a fixed integer type.
 CPython's \texttt{dict}'s performance almost never scales with the number of threads, but is generally high.
 Compared with \texttt{dict} it is worth noting that while the performance may be worse, \texttt{AtomicDict} does guarantee the correctness of the output even in the face of concurrent mutations, while \texttt{dict}, crucially, does not.
 
-As expected, the throughput of the sequential hash table \texttt{dict} almost never scales with the number of threads across the experiments.
+\paragraph{Aggregation, a very common use-case.} As expected, the throughput of the sequential hash table \texttt{dict} almost never scales with the number of threads across the experiments.
 Nevertheless, we find that it exhibits some other less trivial patterns for performance gain, as shown in the aggregation experiment in Figure~\ref{fig:aggregation}.
 For \texttt{dict}, the increasing skew of input data does not deteriorate performance, as is generally the case for concurrent hash tables, and instead improves it, due to the relevant data being more frequently found in the cache and the lack of contention caused by atomic operations.
 For \texttt{AtomicDict}, we can see that its throughput is roughly on par with \texttt{dict} when the skew is small, while contention, as expected, degrades performance.
 It is also possible to observe that the increase in skew from 0.25 to 0.95, increases the throughput for the Growt hash table as well, but does not increase it for \texttt{AtomicDict}.
 This is due to the increased contention on the reference counts of the keys in the table, whereas Growt does not need to deal with memory reclamation for its keys at all.
-We can expect these results to improve once the \texttt{reduce} method is implemented, as described in Section~\ref{subsec:reduce}: the number of atomic operations required to complete this experiment would be drastically reduced.
+
+\paragraph{Reduce.}
+We can expect these results to improve once the \texttt{reduce} method is implemented, as described in Section~\ref{subsec:reduce}: the number of atomic operations required to complete this experiment would be drastically diminished.
 
 \begin{figure}
     \begin{centering}

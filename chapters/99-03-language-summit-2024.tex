@@ -1,0 +1,97 @@
+\chapter{Language Summit}\label{ch:language-summit}
+
+What follows in this Appendix is the handout of a presentation that the author of this Thesis gave at the 2024 Python Language Summit, on April 18th, 2024, in Pittsburgh, PA\@.
+
+
+\section{Free-Threading Ecosystems}\label{sec:free-threading-ecosystems}
+
+Python without the GIL is coming out this fall.
+We can expect more Python programmers to choose multi-threading concurrency models in the future.
+We can also expect thread-safety guarantees to gather more interest, perhaps in the form of atomic data structures.
+
+Given the acceptance notes to PEP 703, one should argue for caution in discussing the prospects of multi-threading ecosystems and of their growth following the release of Python 3.13.\footnote{%
+    \url{https://discuss.python.org/t/a-steering-council-notice-about-pep-703-making-the-global-interpreter-lock-optional-in-cpython/30474}
+}
+With a hopeful spirit, I will disregard this caution here.
+
+I had opened a GitHub issue\footnote{%
+    \url{https://github.com/python/cpython/issues/113920}
+} arguing to make a certain new C-level API called TRY\_INCREF public.
+Sam responded as thoroughly and thoughtfully as he usually does, arguing that function shouldn't be public.
+And I agree with him.
+
+The problem with making TRY\_INCREF public is that its semantics are far too related to the current implementation of the free-threading changes to make it suitable for future-proof support.
+I now argue further that it should never be made public.
+Will core devs ever be able to confidently predict TRY\_INCREF (and possibly other functions like it) will no more be subject to substantial changes or optimizations?
+
+A very concrete problem still stands:  how does an extension increment an object's reference count, without knowing whether it had reached zero, in the time between the pointer was read and the count updated?
+I would say that the level of abstraction for these functions is too low.
+Nevertheless, at a higher level it is possible to provide further guarantees, without constraining what's under the hood.
+
+Following with the same example, it is quite trivial to implement an atomically updatable reference to a PyObject with the new QSBR scheme that's already landed in main.
+But what if Python 3.14 decides to change it radically?
+And what if 3.15 decides to do away with it entirely?
+Well, making guarantees about any low-level API should seem an over-commitment.
+On the other hand, an API for atomically updating a reference to a PyObject seems a high-level use-case worth guaranteeing, regardless of any implementation of reference counting.
+
+So, we could then turn to the pursuit of finding a set of use-cases we wish to support directly over the years.
+This being precisely what I would very much like to contribute towards.
+Of course, it can be the subject of much debate.
+
+One prospect could be going through whatever's currently in the standard library, looking for spots where further atomicity guarantees could be afforded.
+ For instance, considering collections.Counter, we can find that it doesn't guarantee no increment will ever be lost, unless a lock is manually wrapped around it.
+So one might improve the implementation of Counter, or maybe create a new AtomicCounter class for these new use-cases.
+
+Another view could be looking at what other languages are doing.
+For instance,  Java has a concurrent package, which is a large collection of atomic data structures; AtomicReference is the example I was talking about earlier.
+Should we offer the same or similar classes that are inside that package?
+Here I think that we should avoid copying too closely.
+Some behaviors are expected of Python data types that would be very different from Java's.
+For instance, AtomicInteger only stores integer numbers, the usual fashion in strongly-typed Java; but Python integers are expected to turn into floats when appropriate.
+So maybe an AtomicNumber rather than an AtomicInteger might be better suited, perhaps at some added cost in speed.
+
+In general, regardless of whichever color of concurrent data structures one might prefer, the running theme will be the crucial step of reading and writing to the same memory location within the invocation of one method.
+That is, consider for instance Java's AtomicInteger again.
+The way it can be atomic to begin with, is by providing a compare-and-set method, which receives the expected value and the new desired value to update it with, if it really is the case that the currently stored value is the expected one.
+This compare-and-set behavior is the core of most concurrent data structures because it establishes a happens-before ordering between concurrent writes to the same memory location.
+
+Those to whom ``happens-before'' rings a bell, may think I'm going to start talking about memory models, but I will refrain from doing so.
+Mostly because there is no optimization in Python (that I'm aware of) that actually tries to re-order memory accesses, which is the reason why memory models may be useful to begin with.
+And also because memory models are among the most confusing pieces of writing I've ever come across.
+So, if this topic that I'm presenting today is intended to lead to easily understandable abstractions of concurrent operations, then, in my view, it should avoid eliciting the necessity for a Python memory model.
+If the new JIT will ever decide to re-order loads and stores, then we may need to start thinking about memory models (and even then, possibly try to avoid them).
+
+Instead, I'd rather favor the designing of interfaces that alleviate the complexity of the happens-before ordering I was mentioning.
+That is, suppose you want to create an atomic dictionary (as I'm currently trying to do), and you wanted to have simple APIs.
+Well, out of uninterpreted keys and values it is hard to find simpler interfaces than the bare compare-and-set.
+But suppose we have more information about the keys and the values.
+Suppose for instance that the semantics of this dictionary are those of collections.Counter.
+Then it becomes very easy to see how to provide a simpler interface: an imaginary AtomicCounter, could have an increment method which correctly calls the compare-and-set method of its underlying dictionary.
+The programmer using this AtomicCounter need not worry about any happens-before relationships, or any compare-and-set atomic semantics when calling the increment method.
+This seems to me a better direction to take.
+
+There's also the perhaps secondary problem of performance.
+Secondary in the sense that I think thread-safety is usually considered more important to the average programmer.
+
+ The free-threading changes may actually decrease the performance of some multi-threaded workloads.
+Notably, of those that frequently modify some object that is shared among threads.
+Now, I am not up to speed with the most recent optimizations already in main or coming to it, so my understanding may be incomplete.
+But according to observations based on the original fork, these write-heavy flows will be heavily impacted by the free-threading changes.
+Furthermore, when threads attempt to mutate one object, it will be as if the GIL was still there: they would all still be contending one lock.
+New concurrent data structures may alleviate this performance issue.
+
+Also, perhaps, having atomic data structures in the standard library could give Python devs a freer hand in optimizing the single-threaded use-cases for the standard ones.
+
+As a writer of a C extension wishing to implement concurrent lock-free data structures for Python, what I would really like to learn after this session is: does CPython wish to eventually incorporate these features I've been mentioning so far?
+If it doesn't, new low-level APIs like TRY\_INCREF will be necessary to support external efforts towards new free-threading ecosystems.
+
+In summary, to have a free-threaded interpreter without atomic data structures sounds like speaking Italian without saying mamma mia.
+
+So,  here are some questions to get the discussion started:
+\begin{enumerate}
+    \item what primitives (high or low-level) should Python offer to programmers who target the free-threading builds, that it doesn't already offer?
+    \item would they substantially differ from Java's concurrent package, or to the ones found in our standard library?
+    \item to what extent should these be available to extension authors?
+    \item can we escape the need to specify a memory model? and
+    \item is it too early to make any call?
+\end{enumerate}

@@ -20,7 +20,7 @@
 \usepackage{graphicx}
 \usepackage{pgffor}
 \usepackage{epigraph}
-\usepackage[hidelinks]{hyperref}
+\PassOptionsToPackage{hyphens}{url}\usepackage[hidelinks]{hyperref}
 
 % using XeLaTeX
 
@@ -182,7 +182,8 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
     \appendix
-    \input{chapters/99-01-atomic-reference.tex}
-    \input{chapters/99-02-atomic-integer.tex}
+    \input{chapters/99-01-atomic-reference}
+    \input{chapters/99-02-atomic-integer}
+    \input{chapters/99-03-language-summit-2024}
 
 \end{document}
