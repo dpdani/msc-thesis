@@ -1,0 +1,225 @@
+\chapter{Design}\label{ch:design}
+
+
+\section{Python's Dictionary}\label{sec:python-dict}
+
+A lot of the basis for \texttt{AtomicDict} has been inspired from Python's \texttt{dict}.
+Namely, that the hash table itself is instead an index over another table, called the data table.
+In the latter is where the pointers to the keys and values objects reside.
+
+As described in~\cite[\S13.1]{art-mp}, we should be inclined to think that the usage of the dictionary consists of 90\% lookups, 9\% insertions, and 1\% deletes.
+In \S\ref{sec:dict-metrics} we confirm this simple rule-of-thumb.
+We further expose a counter-intuitive notion: most lookups fail.
+(See Section~\ref{sec:dict-metrics} on \texttt{\_Py\_dict\_lookup} for the full details.)
+
+This may be explained by the presence of iterations, that is, of operations that return the entire key-value set.
+Thus, it may be that in most cases, when a program looks up one specific key in the dictionary, it really isn't known whether the key is there or not.
+And furthermore, instead of looking up all the individual keys which are known to be there, it may be that programs prefer to iterate over all keys.
+This would result in individual lookups exhibiting a tendency to fail.
+
+Based on this, we enhance the table hashing with the Robin Hood scheme, known in the literature~\cite{robin-hood,bolt}, which is especially effective in pruning searches for keys which are not in the table.
+Our approach, detailed in the following \S\ref{sec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the dictionary to this scheme: we maintain the Robin Hood invariants, described later, as long as we can do so in a lock-free manner.
+When the maintenance of those invariants requires an increasing number of atomic operations to be carried out in the index, we instead fall back to regular linear probing.
+When doing so, before actually inserting a key that does not maintain the Robin Hood invariants, we mark the hash table as not anymore \emph{compact}.
+A compact operation can be requested by the user to recover the Robin Hood invariants.
+This operation essentially consists of enlarging the hash table so that the invariants can be maintained.
+
+We also optionally store tags in the nodes, further stealing some bits, in order to reduce the necessity of lookups into the data table.
+The tag contains a portion of the hash of the key in the data table, when the tag does is not the same as the equivalent portion of the hash of the key looked up, the relevant entry in the data table is not visited.
+This reduces the cost of having split index and data tables.
+
+
+\section{Migrations}\label{sec:migrations-design}
+
+Another substantial source of inspiration for \texttt{AtomicDict} is to be found in~\cite{maier}.
+The core of the migration routine described later in~\S\ref{sec:migrations} is essentially the same as the one described in~\cite[\S5.3]{maier}.
+
+We therefore maintain, like~\cite{maier}, that:
+
+\begin{quote}
+	[\ldots] The hash table works lock-free as long as no migration is triggered.
+	% Once a migration is triggered, it is not lock-free but it happens asynchronously and it is hidden from any user of the hash table.
+\end{quote}
+
+Let us extend this concept by including other operations as well.
+We will collectively refer to migrations and other kinds of operations that break the lock-freedom of the hash table as \emph{synchronous operations}, described later in Section~\ref{sec:synchronous-operations}.
+The essential characteristic is that their implementation may be greatly simplified by not allowing concurrent lock-free access; both from the perspective of computational costs, and maintenance costs.
+
+Though, given this fundamental difference in picking the hash bits to determine the position in the hash table, it was necessary to re-hash Python-generated hashes, or else the $d_0$ position of very many objects would be $0$.
+In fact, the usage of the most-significant bits scheme is a core assumption for proving~\cite[Lemma~5.1]{maier}.
+This is done with a cheap CRC32 hardware instruction, that Maier also used in his implementation.
+Thus, the required property of hashes being ``\emph{large} pseudo-random numbers,'' is respected.
+
+Maier et al.\ present different various strategies for a migration process to be carried out.
+In this design a single choice, over the four possible variants is made.
+With regards to the strategy for ``[hiding] the migration from the underlying application,'' two choices are presented: either ``[Recruit] User-Threads (u),'' or ``[Use] a Dedicated Thread Pool (p)''.
+We find that it would be surprising for the programmer to find out that a thread pool gets created at each instantiation of a hash table, and that choice would also not be much more performant according to~\cite[\S8.4, Using Dedicated Growing Threads]{maier}.
+With regards to the consistency semantics of migrations (that is, in spite of concurrent mutations), two choices are presented again: either ``[Mark] Moved Elements for Consistency (a--asynchronous),'' or ``[Prevent] Concurrent Updates to Ensure Consistency (s--semi-synchronized).''
+We find that there is one clear choice again: the semi-synchronized strategy seems easier to implement (and to maintain), while also being more performant on average, according to Maier's own measurements.
+Thus, in the following Section~\ref{subsec:quick-migrations}, we only describe what Maier refers to as the \emph{usGrow} implementation variant for migrations.
+
+
+\section{Reservation Buffers}\label{sec:reservation-buffers}
+
+The usage of pages for the data table, implicitly creates zones of contention.
+When threads want to add a new key into the hash table, the most-recently added page is the one in which the insertion is attempted.
+So that effectively all threads are trying to contend one page of the data table.
+
+The degree to which contention is exhibited depends on the strategy with which threads decide which free entry in the page they wish to take for the new item.
+Consider a strategy in which the lowest-numbered entry is always chosen: every thread always tries to reserve the same entry, with only one thread succeeding at any given time.
+
+A simple, yet much better, alternative is to treat the page itself as a sort of hash table.
+That is, instead of choosing an entry based on the current availability, an entry is chosen based on the hash of the key.
+Thus, with sufficiently uniformly distributed hash values, the contention is greatly reduced.
+
+The reservation itself needs to be carried out with atomic operations, so that the cost of inserting one key is always at least two atomic operations: one write to the data table, and one write to the index.
+In order to amortize the cost of having a data table separate from the actual hash table (the index), instead of reserving one entry at every insertion, we let threads reserve a configurable number of entries, four per default.
+The allowed values are 1, 2, 4, 8, 16, 32, or 64, with 64 being the size of an entire data table page.
+When a thread has no available reservations, it resolves to finding a free entry based on the key's hash as described before, reserving four entries; instead when a thread has reservations at disposal, it directly writes into the free entries that it owns, using regular (non-atomic) writes.
+
+In summary, the expected number of atomic writes per inserted key is $1 + 1/4 = 1.25$.
+
+
+\section{Accessor Storage}\label{sec:accessor-storage}
+
+The reservation buffer, along with other things, is stored inside an accessor-local storage.
+It contains:
+\begin{enumerate}
+	\item a mutex;
+	\item a local view of the size of the dictionary;
+	\item a flag indicating whether this accessor (thread) is participating in the current migration; and
+	\item the reservation buffer.
+\end{enumerate}
+
+The mutex itself protects the contents of the accessor storage.
+This may seem counter-intuitive, but it is actually very useful.
+First of all, when a dictionary needs to be freed, all the allocated accessor storages need to be freed as well.
+In order to do this, the accessor storages are kept in a list.
+A thread freeing the dictionary traverses the list to free the accessor storages, and a thread accessing the dictionary for the first time, appends its newly created accessor storage to the list.
+
+The mutex itself is thus generally held only by its accessor, which releases it at the end of any insert, or delete operation.
+
+Furthermore, when a thread becomes the leader of a migration (detailed later), it may necessitate to modify the reservation buffers of the other threads, in case the data table is modified.
+E.g.\ during a shrink migration, the data table is shrunk, in addition to the index, in order to free unoccupied space.
+That also entails that the entries in the reservation buffers need to be changed, because their location relative to the start of the data table has changed.
+
+
+\section{Synchronous Operations}\label{sec:synchronous-operations}
+
+In abstract terms, the presence of the list of thread-local mutexes, described in the above Section, enables the creation of cuts in the execution of dictionary operations, inasmuch as the acquisition of all the thread-local mutexes by one thread creates a distinction between the operations that happened before this circumstance and those that happened afterwards.
+
+This crucial characteristic, which is required e.g.\ for the re-ordering of data table entries, enables also many more usages.
+A few are described in the following sections.
+In particular, it enables a very simple mechanism for ensuring that all accessors come to know the presence of a hash table migration, for establishing the correct size of the hash table, and for performing a sequentially consistent iteration of the items in the hash table.
+
+All of these operations are called synchronous because they all share the common necessity to be carried out sequentially by one thread, or rather that at least one part of their execution needs to be performed sequentially.
+For instance, the hash table migration enjoys the help of more than one thread, but requires a step in which the leader performs the necessary alterations to the data table before other threads can join in the migration.
+
+The addition of this mechanism ensures that the dictionary presented here is capable both of performant lock-free operations, and of complex operations that require the exclusive access to the entire dictionary in order to be performed without a prohibitive number of expensive atomic memory writes.
+The properties that a synchronous operation is sequential and ensured to be mutually exclusive w.r.t.\ all other threads, make it also very simple to be explained and understood, an important characteristic for collaborative development.
+
+Do note that the presence of a synchronous operation does not obstruct concurrent lookup operations, as also described in the relevant later sections.
+The meaning is that for concurrent migrations, the lookup linearizes on the state of the hash table prior to the migration (the thread performing the lookup will not be participating in the migration process).
+For other arbitrary synchronous operations, in principle this behavior may not be acceptable; nevertheless, for those considered so far, it is indeed acceptable.
+This exemption of lookups from the participation in migrations follows along the lines of~\cite[\S5.3.2, Preventing Concurrent Updates to Ensure Consistency]{maier}, i.e.\ only mutations are prevented, read-only operations are allowed to proceed on the prior state of the hash table.
+
+
+\section{Lazy Robin-Hood}\label{sec:lazy-robin-hood}
+
+The Robin Hood state for the hash table is essentially the distance each key has from its distance-0 position.
+In other words, the number of collisions.
+
+In order to keep track of this distance, we steal some bits from the nodes in the index.
+According to~\cite[Corollary to Theorem~3]{robin-hood}, the expected number of collisions per probe for a full table is $\Theta(\log n)$, e.g.\ four for a table of size 64.
+Such is a relatively low number, thus we can steal two bits, or in general $\log \log n$ bits, from the index nodes.
+
+We do so, by following the values in Table~\ref{tab:robin-hood-nodes}.
+As you can observe the proposed hash table has definite minimum and maximum sizes, respectively of $2^{6} = 64$ and $2^{56} \approxeq 7.2 \times 10^{16}$.
+
+\begin{table}
+	\centering\begin{tabular}{llll|llll}
+		$\log n$ & Node & Distance & Tag & $\log n$ & Node & Distance & Tag\\
+		\hline
+		6 & 8 & 2 & 0 & 32 & 64 & 5 & 27 \\
+		7 & 16 & 3 & 6 & 33 & 64 & 6 & 25 \\
+		8 & 16 & 3 & 5 & 34 & 64 & 6 & 24 \\
+		9 & 16 & 4 & 3 & 35 & 64 & 6 & 23 \\
+		10 & 16 & 4 & 2 & 36 & 64 & 6 & 22 \\
+		11 & 32 & 4 & 17 & 37 & 64 & 6 & 21 \\
+		12 & 32 & 4 & 16 & 38 & 64 & 6 & 20 \\
+		13 & 32 & 4 & 15 & 39 & 64 & 6 & 19 \\
+		14 & 32 & 4 & 14 & 40 & 64 & 6 & 18 \\
+		15 & 32 & 4 & 13 & 41 & 64 & 6 & 17 \\
+		16 & 32 & 4 & 12 & 42 & 64 & 6 & 16 \\
+		17 & 32 & 5 & 10 & 43 & 64 & 6 & 15 \\
+		18 & 32 & 5 & 9 & 44 & 64 & 6 & 14 \\
+		19 & 32 & 5 & 8 & 45 & 64 & 6 & 13 \\
+		20 & 32 & 5 & 7 & 46 & 64 & 6 & 12 \\
+		21 & 32 & 5 & 6 & 47 & 64 & 6 & 11 \\
+		22 & 32 & 5 & 5 & 48 & 64 & 6 & 10 \\
+		23 & 32 & 5 & 4 & 49 & 64 & 6 & 9 \\
+		24 & 32 & 5 & 3 & 50 & 64 & 6 & 8 \\
+		25 & 32 & 5 & 2 & 51 & 64 & 6 & 7 \\
+		26 & 64 & 5 & 33 & 52 & 64 & 6 & 6 \\
+		27 & 64 & 5 & 32 & 53 & 64 & 6 & 5 \\
+		28 & 64 & 5 & 31 & 54 & 64 & 6 & 4 \\
+		29 & 64 & 5 & 30 & 55 & 64 & 6 & 3 \\
+		30 & 64 & 5 & 29 & 56 & 64 & 6 & 2 \\
+		31 & 64 & 5 & 28 & \\
+	\end{tabular}
+	\caption{Sizes of internal fields of nodes in the index hash table. Let $n$ be the capacity of the table, and \emph{Node}, \emph{Distance}, and \emph{Tag} refer to their respective sizes, expressed in number of bits.}
+	\label{tab:robin-hood-nodes}
+\end{table}
+
+Comparing with~\cite{robin-hood}, we have slightly modified the invariant so as to favor avoiding moving elements on a tie.
+
+The laziness in our approach is that if the \emph{aligned} size of the write required to safely insert the node into the index exceeds 128-bits, then we refrain from maintaining the Robin Hood invariants at all, for we would need to employ more than one atomic writes in order to store the newly inserted key.
+This is because we cannot use the hardware~\cite[CMPXCHG--Compare and Exchange]{x86-64} instruction over more than 16-bytes.
+The instruction further requires that the write be 16-byte aligned, or else a segmentation fault is encountered.
+(Other faults may be encountered as well, depending on the architecture; for instance in \texttt{aarch64} ISAs a bus fault is encountered.
+ISAs other than x86-64 are not currently supported.)
+Thus, e.g.\ if a new node is inserted into the index after a 16-byte boundary, the insertion cannot be performed with a normal (i.e.\ compact) node.
+
+That is, when the distance cannot be stored in $O(\log \log n)$ space, we semantically say the distance is $\infty$ and store it as $\log \log n - 1$ (we may later refer to this as the maximum distance for a given size of the table, or simply as the maximum distance).
+When a node has distance equals to the maximum distance, we say that node is a non-compact node.
+We also employ non-compact nodes to denote tombstones.
+As is well known, see for instance~\cite[\S6.4]{the-art-vol-2}, ``the obvious way of deleting records from a hash table doesn't work.''
+Instead of simply removing a node, we swap it for a tombstone node, which is a non-compact node pointing to entry number 0 of the data table.
+The data table maintains the invariant that the key and value fields of that entry are always \texttt{NULL}.
+This is achieved by requiring at initialization time that the thread creating the \texttt{AtomicDict} instance reserves entry number 0 for itself, and marks it as already occupied, without writing anything into it.
+Thus, all data tables have at least one unused entry.
+Furthermore, if the thread that created the hash table never writes into it, there will always be $|R|$ unused entries, with $|R|$ being the size of the reservation buffer.
+For more details on reservations see \S\ref{sec:reservation-buffers}.
+Operations that read the index, simply always skip non-compact nodes that point to entry 0.
+Further details on tombstone nodes and deletes are given in \S\ref{sec:delete}.
+
+When a new node could be inserted, respecting the requirements for our lazy robin hood, but it should be inserted at a distance greater then the maximum, we initiate a grow migration, as described in~\S\ref{sec:migrations}.
+In effect, we have a local trigger for our migrations that doesn't require global knowledge of the table.
+We can observe the local effect of collisions to determine that the table size is too small, and take action accordingly.
+This is not the only trigger for migrations, for a complete list refer to the relevant section.
+One may argue that a degenerate set of hashes can continuously trigger migrations.
+While this is true in principle, do observe an implication of Table~\ref{tab:robin-hood-nodes}: starting from a table capacity of $2^9 = 512$, the maximum distance is 16, while the number of nodes in a 16-byte-aligned region of memory (a quad word), is 8.
+Therefore, the described mechanism effectively cannot be triggered indefinitely.
+
+
+\section{Garbage Collection}\label{sec:garbage-collection}
+
+As Micheal Maged put it in~\cite[\S2.3]{micheal-hash-tables}:
+\begin{quote}
+	[\ldots] The failure or delay of the garbage collector may prevent threads operating on lock-free objects from making progress indefinitely, thus violating lock-freedom.
+\end{quote}
+
+Such is undeniably correct, and therefore, the proposed implementation for \texttt{AtomicDict} cannot be considered lock-free, simply by virtue of the fact that its memory is managed through Python's garbage collector.
+Notwithstanding, this was a deliberate implementation detail and not a foundational piece in the design of \texttt{AtomicDict}.
+The fact that its internal data structures are traced with Python's GC is something that can be easily changed without compromising the design.
+The choice was chiefly made to simplify the implementation of \texttt{AtomicDict}.
+Furthermore, given the fact that the hash table access was subject to the interpretation of Python code by the CPython interpreter, as that is the target for the presented work, there was no possibility of not having to deal with a stop-the-world GC\@.
+
+Python code is not the only means through which \texttt{AtomicDict}'s APIs can be accessed.
+The library also exposes C header files (though, their standalone usage has not yet been explored).
+For those use-cases that don't employ Python code, but rather directly call \texttt{AtomicDict}'s C functions, true lock-freedom can be of interest.
+
+Changing the implementation to not be based on the provided GC, but instead using a dedicated memory management system, is entirely possible; albeit requiring a lot of additional work.
+One way this can be achieved is by implementing what Micheal himself describes in~\cite{micheal-safe-reclamation}, which employs so-called \emph{hazard pointers} (or any other suitable algorithm).
+
+Serious effort was not put into looking at this possible implementation change, as of the time of writing.
