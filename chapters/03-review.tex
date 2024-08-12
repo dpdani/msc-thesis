@@ -1,4 +1,4 @@
-\chapter{Review of the State of the Art}\label{ch:review}
+\chapter{A Review of the State of the Art}\label{ch:review}
 
 This Chapter provides a detailed examination of various hash table implementations and optimizations, focusing on their design principles, performance implications, and practical applications.
 It is structured into several sections, each addressing different designs.
@@ -10,7 +10,8 @@ There are also included some general remarks about hash computation in Python.
 
 We then explore concurrent hash table designs, beginning with Maier's hash table which was the main source of design inspiration for \texttt{AtomicDict}.
 Important differences with the hashing techniques used in CPython's \texttt{dict} are highlighted.
-We then continue exploring novel hash table designs which are all based on Maier's design, which has been found to be an important milestone in the literature.
+We then continue exploring novel hash table designs which are all based on Maier's design.
+It has been found to be an important milestone in the literature.
 Two designs are explored: Bolt and DRAMHiT, both of which contributed some design decisions in \texttt{AtomicDict}, albeit less prominently.
 
 We conclude with some remarks on the feasibility of completely lock-free hash tables, finding that they are in fact not practical due to the limitations of currently available hardware.
@@ -30,7 +31,7 @@ Later, we also highlight the changes that have been made to \texttt{dict} in ord
 
 \subsection{Key Sharing}\label{subsec:key-sharing}
 
-Recall that CPython uses hash tables to store the attributes of objects	.
+Recall that CPython uses hash tables to store the attributes of objects.
 It is immediate to see that different instances of the same class will generally have the same keys in their respective hash tables.
 A relatively simple optimization is thus to store the set of keys separately.
 
@@ -48,12 +49,12 @@ This optimization was not interesting for use in \texttt{AtomicDict}, because it
 \subsection{Compact Dictionary}\label{subsec:compact-dict}
 
 In late 2012, Raymond Hettinger proposed a compact, ordered implementation of CPython's \texttt{dict}, in~\cite{hettinger-dict}.
-The design, which is still \texttt{dict}'s main design as of the time of writing, is based on the observation that the previous hash table design was memory-inefficient.
-He noted that the table in which the items were stored, was unnecessarily wide: it required 24 bytes for storing the key pointer, the value pointer, and the hash value.
+The design, which is still \texttt{dict}'s main design as of the time of writing, is based on the observation that the previous one was memory-inefficient.
+Hettinger noted that the table in which the items were stored, was unnecessarily wide: it required 24 bytes for storing the key pointer, the value pointer, and the hash value.
 In combination with the necessity of keeping the table sufficiently sparse (in order to cope with collisions), it generated a large amount of unused space.
 He instead proposed having two separate tables: one sparse table, called the index, and another, dense table, called the entries table, which the index table refers to.
 
-Insertion order is preserved because iterations read the entries table, and new items are appended to that table, following insertion order.
+Insertion order is preserved because iterations read the entries table, and new items are appended to that table.
 The actual hash table is the sparse index, which can fit into two cache lines for tables of size $m \leq 128$.
 
 To further reduce memory usage, the size of index slots will vary depending on the size of the key set: when it is small there is no need to reference the entries table with 64-bit numbers.
@@ -64,18 +65,19 @@ In order to accomodate Key Sharing (see above), the entries table may be further
 Splitting the sparse index table from the dense entries table, improves on both the storage space and the iteration speed.
 In fact, if we call $\alpha$ the load factor of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $(1 - \alpha)m$ empty 24-bytes entries for the unused slots in the hash table.
 Instead, there will be $(1 - \alpha)m$ empty $O(8)$-bytes slots in the index.
-That is, the entries table will have a load factor of $\sim$100\% (entirely filled, except for deleted entries): entirely filled, except for deleted entries.
+That is, the entries table will have a load factor of $\sim$100\%: entirely filled, except for deleted entries.
 When iterating over the keys in the dictionary, the dense entries table will serve as the basis for the iteration, instead of the sparse index.
 Thus, reading unoccupied slots is avoided, and the memory bandwidth required for an iteration is reduced.
 
 As the set of keys becomes larger than the maximum allowed load factor $\alpha_{\max} = 2/3$, the resizing process is initiated, which does not modify the entries table, but only the smaller index.
-(Resizing is also termed as \emph{migrating} in the literature.)
+(Resizing is also termed \emph{migrating} in the literature.)
 CPython's \texttt{dict} does not reduce its size after a large-enough sequence of deletions, that is, $\nexists\alpha_{\min}$.
 
 
 \subsection{Python Hashing}\label{subsec:python-generated-hash-values}
 
-CPython takes a controversial approach to hashing that departs from the standard literature, but it is grounded in the concrete usage of their hash tables, quoting from~\cite{dict-comment-hash}:
+CPython takes a controversial approach to hashing that departs from the standard literature, but it is grounded in the concrete usage of their hash tables.
+Quoting from~\cite{dict-comment-hash}:
 \begin{quote}
 	Most hash schemes depend on having a ``good'' hash function, in the sense of simulating randomness.
 	Python doesn't:  its most important hash functions (for ints) are very regular in common cases:
@@ -110,7 +112,7 @@ We will therefore resort to assume that those properties hold, as we have no con
 \subsection{With the Free-Threading Changes}\label{subsec:dict-free-threading}
 
 Without the GIL, concurrent accesses to a sequential hash table such as \texttt{dict} may yield inconsistent program states, and lead to interpreter crashes.
-Therefore, free-threading CPython requires that concurrent accesses to \texttt{dict} must be synchronized through a mutex.
+Free-threading CPython requires that concurrent accesses to \texttt{dict} must be synchronized through a mutex.
 
 Size retrieval of a \texttt{dict} is exempt from this requirement, since the size field itself is maintained correct with the \texttt{dict}'s mutex, and is thus easily available for concurrent reading.
 
@@ -121,10 +123,10 @@ They are:
 	\item reading the next value from a \texttt{dict} iterator, which is also implemented with a lookup operation.
 \end{enumerate}
 These two operations may optimistically run without locking the \texttt{dict}'s mutex, but are sometimes required to fall back to a slow path that requires locking.
-The slow path is executed when some mutation on the \texttt{dict} was performed.
+The slow path is executed when some mutation on the \texttt{dict} was performed concurrently.
 
 Let us consider two cases involving a lookup (or eq.\ an iteration), and another concurrent mutation.
-Note that concurrent mutations are always obstructed by other concurrent mutations, thus need no detailed discussion.
+Note that concurrent mutations are always obstructed by other concurrent mutations.
 
 \paragraph{Lookup and Update.}
 Suppose two threads $t_l$ and $t_u$ are respectively reading a key $k$ and updating its associated value $v$, in \texttt{dict} $H$.
@@ -149,7 +151,7 @@ The following can happen:
 
 \paragraph{Lookup and Resize.}
 Suppose two threads $t_l$ and $t_i$ are respectively reading a key $k$ and inserting another key $k'$, in \texttt{dict} $H$.
-The following might happen:
+The following can happen:
 \begin{enumerate}
 	\item $t_i$ acquires the lock of $H$;
 	\item $t_l$ finds the position of $k$ in $H$;
@@ -175,20 +177,20 @@ Furthermore, this applies to \emph{any} two or more keys, differently from a fin
 
 \section{Maier's Concurrent Hash Table}\label{sec:maier-review}
 
-In~\cite{maier}, Maier and his colleagues describe a table migration process that crucially eliminates most of the contention that can in principle arise from a migration.
-In contrast with the standard literature, see for instance~\cite[Figure~13.30]{art-mp}, the migration process described does not necessitate the acquisition of one or multiple locks by a single thread that then takes care of performing the resizing.
-In fact, in the entire~\cite[Chapter~13]{art-mp}, resizing (eq.\ migrating) is described only in terms of a ``stop-the-world'' operation.
+In~\cite{maier}, Maier et al.\ describe a table migration process that crucially eliminates most of the contention that can arise from a migration.
+In contrast with the standard literature (see~\cite[Figure~13.30]{art-mp}) the migration process described does not necessitate the acquisition of one or multiple locks by a single thread that then takes care of performing the resizing.
+In fact, in the entire Chapter~13 of~\cite{art-mp}, resizing (eq.\ migrating) is described only in terms of a ``stop-the-world'' operation.
 
 Maier's hash table implementation has an important difference when compared with Python's dictionary.
 In the latter, the least-significant bits of the hash are used to determine the position in the linear array; that is, $d_0(x) = x \mod 2^s$, with $s$ being the logarithm base-2 of the dictionary size.
-While in the former, the most-significant bits are used: $d_0(x) = x \gg (64 - s)$, where $\gg$ is a right-shift operation.
+While in Maier's, the most-significant bits are used: $d_0(x) = x \gg (64 - s)$, where $\gg$ is a right-shift operation.
 The reason why Maier chose the right-shift based scheme is so that the relative position of two keys which are in the same probe doesn't change as much as in the alternative, when the array is resized.
 
-That is, consider a key $x$ s.t. $h(x) \mathbin{\&} 2^{s + 1} = 0$, and a key $y$ s.t.\ $h(x) \mathbin{\&} 2^{s + 1} = 1$.
-If they were colliding before resizing from $s$ to $s + 1$ (i.e. $h(x) \mathbin{\&} 2^s - 1 = h(y) \mathbin{\&} 2^s - 1$), they will not collide in the corresponding hash table of size $s + 1$.
+That is, consider a key $x$ s.t. $h(x) \mathbin{\&} 2^{s + 1} = 0$, and a key $y$ s.t.\ $h(y) \mathbin{\&} 2^{s + 1} = 1$, where $\mathbin{\&}$ is a bitwise-and operation.
+If they were colliding before resizing from $s$ to $s + 1$ (i.e. $h(x) \mathbin{\&} (2^s - 1) = h(y) \mathbin{\&} (2^s - 1)$), they will not collide in the corresponding hash table of size $s + 1$.
 But this creates an unexpected problem.
 Consider the distance-0 after the migration $d_0'(x) = d_0(x)$.
-The $d_0$ position of $y$ will have changed from $d_0(y) = h(y) \mathbin{\&} 2^s-1$ to $d_0'(y) = h(y) \mathbin{\&} 2^{s+1}-1$.
+The $d_0$ position of $y$ will have changed from $d_0(y) = h(y) \mathbin{\&} (2^s - 1)$ to $d_0'(y) = h(y) \mathbin{\&} (2^{s+1} - 1)$.
 In other words, $d_0'(y) = d_0(y) + 2^s$.
 The problem with this behavior is that the position in the new array cannot be safely determined by looking at the prior array, without reading the actual hashes of each key in a probe.
 
@@ -207,23 +209,23 @@ This is too severe a limitation for a Python hash table: it would in fact not be
 
 In order for Python code to interact with this limited hash table, the keys and values would need to be cast to Python \texttt{int} types.
 While possible in principle, it also would entail a performance decrease, since the \texttt{int} objects themselves would be contended, even between lookups.
-In fact, at any given time there can exist one CPython \texttt{int} for any integer number, and there cannot exist two CPython \texttt{int} objects that store the same value.
-It follows that two concurrent lookups over the same key $k$, assuming there are no other concurrent operations on $k$, would necessarily content on the reference count of the associated \texttt{int} object, generated from the C integer stored in the hash table.
+Two concurrent lookups over the same key $k$, would necessarily contend on the reference count of the associated \texttt{int} object.
 Therefore, it would make no difference to store the \texttt{int} object pointers themselves in the hash table.
 
-In \S5.7 of their work, Maier et al.\ note that it is possible to generalize their hash table to complex keys and values, albeit with some impact on performance.
+In~\cite[\S5.7]{maier}, Maier et al.\ note that it is possible to generalize their hash table to complex keys and values, albeit with some impact on performance.
 The publicly available implementation advertises the availability of this functionality, thus some work followed the publication of the paper.
 Notwithstanding, the feature seems not to be functioning.
 The necessary compiler flag was explicitly disabled by default, and enabling it causes errors.
-The authors of the library have not responded to inquiries by this author pertaining this functionality.
+The authors of the library have not responded to inquiries by this author pertaining said functionality.
 We have resolved to assume that it is not available.
+We did not have the possibility to assess its performance impact.
 
 The remarks made on memory management are resembling of mimalloc's approach to sharded, thread-free lists, described in~\cite{mimalloc} and employed in free-threading CPython.
 
 
 \section{Bolt}\label{sec:bolt}
 
-Building on the work described in the previous Section, E.\ Kahssay presents in his Master Thesis a concurrent hash table named Bolt that allegedly has even better performance.
+Building on the work described in the previous Section, E.\ Kahssay presented in his Master Thesis a concurrent hash table named Bolt that allegedly has even better performance.
 It is based on the application of Robin Hood hashing, a modified linear probing scheme first described by Celis et al.\ in~\cite{robin-hood} where already inserted items can be displaced by newly inserted items so as to reduce the variance in probe length.
 The technique enables the pruning of searches in linear probing.
 
@@ -231,7 +233,7 @@ This leads to a more complex insertion routine.
 Consider the general situation in which a new item is being inserted.
 Paraphrasing from~\cite{robin-hood}:
 \begin{quote}
-	Suppose that element $A$ is at location $l$, at distance $d_a$ from its distance-0 slot, and $B$ is to be inserted (or moved).
+	Suppose that element $A$ is at location $l$, at distance $d_a$ from its distance-0 slot, and $B$ is to be inserted.
 	Suppose $B$ has been denied allocation of its first $d_b - 1$ choices, and we are now considering $l$, its $d_b$th choice.
 \end{quote}
 Then, the Robin Hood invariant maintains that:
@@ -260,20 +262,20 @@ The performance characteristics presented in Kahssay's Thesis supposedly compens
 Notwithstanding, an implementation was not provided, neither in the Thesis, nor upon request to Kahssay.
 The author has thus been unable to confirm the results presented.
 
-The Robin Hood scheme was considered interesting nonetheless, because it especially enhances the performance of lookups that fail, i.e.\ that return that an item is not in the hash table.
+The Robin Hood scheme was considered interesting nonetheless, because it especially enhances the performance of lookups that fail.
 In fact, with regular linear probing it is necessary to visit the entire probe before returning a failure, while in Robin Hood hashing, it is possible to prune the search by observing the distance of items in the probe.
 The approach taken to Robin Hood hashing by this author is presented in Section~\ref{subsec:lazy-robin-hood}.
 
 \paragraph{Performance under contention.}
-Contentious accesses are a common pattern in real-world usages of hash tables, as known in the literature.
+Contentious accesses are a common pattern in real-world usages of concurrent hash tables, as commonly known.
 Bolt scheme of using fine-grained locking would seem especially subject to degradation in high-contention scenarios, as also noted by Kahssay himself.
-Let us compare the approaches of Maier et al.\ (\S8.4, ``Performance under contention'') and of Kahssay (\S7.4) in evaluating these scenarios.
+Let us compare the approaches of Maier et al.\ \cite[\S8.4, ``Performance under contention'']{maier} and of Kahssay~\cite[\S7.4]{bolt} in evaluating these scenarios.
 Differently from Maier, Kahssay only evaluates a Zipf distribution with a contention parameter $\theta = 0.75$.
 In a Zipf distribution it can be that $\theta \in [0, 2]$, which are the bounds considered by Maier.
 In fact, as noted by Maier, a little contention can help performance.
 The experiment evaluated by Kahssay comprises a workload of 90\% lookups and 10\% updates.
 In such a scenario, it happens that contention actually increases performance due to caching for 90\% of the workload.
-This scenario makes it unfeasible to properly compare Kahssay's and Maier's hash tables under contention.
+The chosen scenario makes it unfeasible to properly compare Kahssay's and Maier's hash tables under contention.
 It would have been much more interesting to review a scenario with 100\% updates and varying contention parameter $\theta$, as shown in Maier's work.
 Without any distribution of Bolt, it is not possible to properly review its performance under contention.
 
@@ -281,7 +283,7 @@ Without any distribution of Bolt, it is not possible to properly review its perf
 \section{DRAMHiT}\label{sec:dramhit}
 
 In~\cite{dramhit} a hash table that allegedly reaches the throughput of main memory is presented.
-We raise here various doubts on the work presented and its underlying implementation.
+We raise here various doubts on this work and its underlying implementation.
 
 The abuse of empiricism makes it difficult to verify their results, rendering them unreliable.
 For instance, the observation that:
@@ -289,20 +291,20 @@ For instance, the observation that:
 	[\ldots] on a fill factor of 75--80\%, lookup and insertion operations require only 1.3 cache line accesses per request on average.
 	[\ldots] This is critical for reducing pressure on the memory subsystem.
 \end{quote}
-is not backed by evidence, nor it is ever detailed how such measurements were made.
+is not backed by any evidence, nor it is ever detailed how such measurements were made.
 Thus, the measurements are found to be unreproducible.
 
 The obsession with maintaining the highest attainable performance, has induced the authors of DRAMHiT to directly employ assembly code in their implementation, making it substantially less portable.
-Given that the architectures supported by CPython are numerous, the present author necessitates code portability between different platform and architectures, making it hard to draw inspiration from this implementation.
+Given that the architectures supported by CPython are numerous, the present author necessitates code portability between different platforms and architectures; it was hard to draw inspiration from this implementation.
 Also, considering the added burden of supporting several assembly code paths in order to support several architectures, this was considered a poor implementation choice.
 In addition to the observations on portability, the employment of assembly code also renders the code much less readable and maintainable.
 
 DRAMHiT operations design is largely based on the design of Maier's hash table.
 Never throughout the paper the lock-freedom property of DRAMHiT is expressly mentioned.
 We find that it is in fact not lock-free, albeit largely based on lock-free designs.
-This is chiefly because of the design of their Algorithm~1, where the prefetch engine is presented.
+This is chiefly because of the design of~\cite[Algorithm~1]{dramhit}, where the prefetch engine is presented.
 In fact, it can be easily seen that if one thread $t$ performs a lookup operation, but there are currently not enough pending operations to fill the prefetch window, $t$ is arbitrarily delayed.
-Furthermore, if there were no running thread other than $t$, the prefetch window would never be filled, and $t$ would be blocked for an unbounded amount of time; even if it is the only thread running!
+Furthermore, if there were no running threads other than $t$, the prefetch window would never be filled, and $t$ would be blocked for an unbounded amount of time; even if it is the only thread running.
 By the operations presented in the paper, it seems as though a single thread performing a single key lookup is not an effectively supported use-case, which is absurd.
 
 Finally, the design choice that made the author most reluctant to accept the design of DRAMHiT was its asynchronous interface.
@@ -324,7 +326,8 @@ This problem is partially addressed in \texttt{AtomicDict}'s \texttt{{batch\_loo
 
 \section{Completely Lock-Free Hash Tables}\label{sec:on-the-feasibility-of-completely-lock-free-hash-tables}
 
-In Section~\ref{sec:maier-review} lock-free operations on hash tables are described, which crucially don't comprise the migration operation as well.
+Most operations on Maier's hash table are lock-free.
+This, crucially, does not comprise the migration operation as well.
 That a fully lock-free migration process is possible has been shown by Hesselink et al.\ in~\cite[\S3.5]{hesselink}.
 Notwithstanding the theoretical achievement, the practicality of such an approach can be subject to debate.
 
@@ -333,7 +336,7 @@ An atomic write can be considered to be an order of magnitude more expensive tha
 For instance, Intel SkyLake's \texttt{lock~cmpxchg8b} has a measured latency of 23 clock cycles, while a \texttt{mov} instruction from a register to memory has a latency of 2 cycles.
 (Agner Fog provides excellent and comprehensive tables for individual instruction latencies over several x86 processor architectures in~\cite{x86-instruction-tables}.)
 
-Because of the prohibitive cost of atomic writes, it is easy to see how the cost of migrations quickly becomes unsustainable, as noted in~\cite{maier} as well:
+Because of the cost of atomic writes, it is easy to see how the cost of migrations quickly becomes prohibitive, as noted in~\cite{maier} as well:
 \begin{quote}
 	While [\ldots] lock-free dynamic linear probing hash tables are possible, there is no result on their practical feasibility.
 	Our focus is geared more toward engineering the fastest migration possible; therefore, we are fine with small amounts of locking, as long as it improves the overall performance.
@@ -341,4 +344,4 @@ Because of the prohibitive cost of atomic writes, it is easy to see how the cost
 
 The present author has also taken the same stance.
 At the current time, it appears unfeasible to use completely lock-free hash tables in practice.
-Furthermore, it is hard to believe that such limitations on the performance of atomic operations will ever be lifted by hardware of the future.
+Furthermore, it is hard to believe that such limitations on the performance of atomic operations will ever be lifted by the hardware of the future.

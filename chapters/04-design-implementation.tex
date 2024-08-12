@@ -25,10 +25,9 @@ In the latter is where the pointers to the keys and values objects reside.
 As described in~\cite[\S13.1]{art-mp}, we should be inclined to think that the usage of the dictionary consists of 90\% lookups, 9\% insertions, and 1\% deletes.
 In \S\ref{sec:dict-metrics} we confirm this simple rule-of-thumb.
 We further expose a counter-intuitive notion: most lookups fail.
-That is, most lookups return that the key searched for was not found in the hash table.
-(See \S\ref{sec:dict-metrics} on \texttt{\_Py\_dict\_lookup} for the full details.)
+(See Section~\ref{sec:dict-metrics} on \texttt{\_Py\_dict\_lookup} for the full details.)
 
-This may be explained by the ubiquitous presence of iterations, that is, of operations that return the entire key-value set.
+This may be explained by the presence of iterations, that is, of operations that return the entire key-value set.
 Thus, it may be that in most cases, when a program looks up one specific key in the dictionary, it really isn't known whether the key is there or not.
 And furthermore, instead of looking up all the individual keys which are known to be there, it may be that programs prefer to iterate over all keys.
 This would result in individual lookups exhibiting a tendency to fail.
@@ -36,7 +35,7 @@ This would result in individual lookups exhibiting a tendency to fail.
 Based on this, we enhance the table hashing with the Robin Hood scheme, known in the literature~\cite{robin-hood,bolt}, which is especially effective in pruning searches for keys which are not in the table.
 Our approach, detailed in the following \S\ref{subsec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the dictionary to this scheme: we maintain the Robin Hood invariants, described later, as long as we can do so in a lock-free manner.
 When the maintenance of those invariants requires an increasing number of atomic operations to be carried out in the index, we instead fall back to regular linear probing.
-When doing so, before actually inserting a key that does not maintain the Robin Hood invariants, we mark the hash table as not anymore compact.
+When doing so, before actually inserting a key that does not maintain the Robin Hood invariants, we mark the hash table as not anymore \emph{compact}.
 A compact operation can be requested by the user to recover the Robin Hood invariants.
 This operation essentially consists of enlarging the hash table so that the invariants can be maintained.
 
@@ -45,14 +44,10 @@ The tag contains a portion of the hash of the key in the data table, when the ta
 This reduces the cost of having split index and data tables.
 
 
-\subsection{Concurrent Hash Table Design of Maier et al.}\label{subsec:maier}
+\subsection{Migrations}\label{subsec:maier}
 
 Another substantial source of inspiration for \texttt{AtomicDict} is to be found in~\cite{maier}.
 The core of the migration routine described later in~\S\ref{sec:migrations} is essentially the same as the one described in~\cite[\S5.3]{maier}.
-
-\texttt{AtomicDict} also follows the same philosophy.
-It is clear that the cost of hardware primitives that implement compare-and-set memory semantics is very high when contrasted with the normal memory access primitives, thus they should be used sparingly.
-Mutual exclusion should be used when it helps to simplify the algorithm and its running time.
 
 We therefore maintain, like~\cite{maier}, that:
 
@@ -62,8 +57,8 @@ We therefore maintain, like~\cite{maier}, that:
 \end{quote}
 
 Let us extend this concept by including other operations as well.
-We will collectively refer to migrations and other kinds of operations that break the lock-freedom of the hash table as \emph{synchronous operations}, described later in~\S\ref{subsec:synchronous-operations}.
-The essential characteristic is that their implementation may be greatly simplified by not allowing concurrent lock-free access; both from the perspective of computational costs, or maintenance costs.
+We will collectively refer to migrations and other kinds of operations that break the lock-freedom of the hash table as \emph{synchronous operations}, described later in Section~\ref{subsec:synchronous-operations}.
+The essential characteristic is that their implementation may be greatly simplified by not allowing concurrent lock-free access; both from the perspective of computational costs, and maintenance costs.
 
 Though, given this fundamental difference in picking the hash bits to determine the position in the hash table, it was necessary to re-hash Python-generated hashes, or else the $d_0$ position of very many objects would be $0$.
 In fact, the usage of the most-significant bits scheme is a core assumption for proving~\cite[Lemma~5.1]{maier}.

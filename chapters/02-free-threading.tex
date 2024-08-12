@@ -7,7 +7,7 @@ We start by examining concurrent, biased reference counting, which optimizes per
 Deferred reference counting is introduced for objects where consistent reference counting is impractical.
 These objects defer computing their true reference count until Garbage Collection (GC) pauses.
 
-Quiescent State-Based Reclamation (QSBR) is discussed as a mechanism to support lock-free read accesses to built-in data structures, optimizing those accesses which are deemed the most frequent.
+Quiescent State-Based Reclamation (QSBR) is presented as a mechanism to support lock-free read accesses to built-in data structures, optimizing those accesses which are the most frequent.
 QSBR delays freeing objects until no thread can be in the process of accessing them, preventing use-after-free bugs.
 To support this change, it was also necessary to change CPython's memory allocator to mimalloc, a thread-safe alternative.
 Adjustments were also necessary for CPython's GC, which so becomes a ``stop-the-world'' collector.
@@ -40,7 +40,7 @@ Their meanings are described in~\cite[\S Biased Reference Counting]{pep703}:
     The states form a progression: during their lifecycle, objects may transition to any numerically higher state.
     Objects can only be deallocated from the ``default'' and ``merged'' states.
     Other states must transition to the ``merged'' state before deallocation.
-    Transition states requires an atomic compare-and-swap on the [shared reference count] field.
+    Transitioning states requires an atomic compare-and-swap on the [shared reference count] field.
 \end{quote}
 
 \paragraph{The ``default'' state.}
@@ -59,7 +59,7 @@ The object is then enqueued in the owner's queue of objects to be merged.
 When the object enters the ``merged'' state, its owner thread field is reset, indicating that the object is not owned by any thread, and the owner's reference count is no longer used.
 When the shared reference count reaches 0, the object may be deallocated, when a quiescent state is reached (see Section~\ref{sec:qsbr}).
 
-Note that this rarely happens, because (1) most objects are accessed by a single thread, and (2) it is rare for an object to have a negative shared reference count.
+Note that these transitions rarely happen, because (1) most objects are accessed by a single thread, and (2) it is rare for an object to have a negative shared reference count.
 
 
 \paragraph{Thread identifiers.}
@@ -77,7 +77,7 @@ This API is also used in this thesis to elect the leader thread for a hash table
 \section{Deferred reference counting}\label{sec:deferred-reference-counting}
 
 For some particular objects, it does not make sense to keep a consistent reference count.
-The object owner's reference count also stores two flags, used to indicate that the object is immortal, or that it can use deferred reference counting.
+The owner's reference count also stores two flags, used to indicate that the object is immortal, or that it can use deferred reference counting.
 Immortal objects are objects whose lifetime equals the lifetime of the program, such as ``interned strings, small integers, statically allocated PyTypeObjects, and the \texttt{True}, \texttt{False}, and \texttt{None} objects.''
 
 Reference counts for some non-immortalized, contended objects may be deferred.
@@ -96,7 +96,7 @@ This is not a general approach to deferred reference counting, and thus departs 
 
 An additional change to CPython for free-threading is QSBR\@.
 Although not directly referred to as QSBR, it was initially described in~\cite[\S Mimalloc Page Reuse]{pep703}, and later discussed in greater detail in the accompanying GitHub issue~\cite{qsbr}.
-CPython's implementation of QSBR closely follows Free BSD's implementation of Globally Unbounded Sequences, as noted by Gross in the referred issue.
+CPython's implementation of QSBR closely follows FreeBSD's implementation of Globally Unbounded Sequences, as noted by Gross in the referred issue.
 
 This mechanism serves to support lock-free read accesses to built-in data structures.
 When a thread $t_r$ optimistically avoids locking a shared \texttt{dict} $H$'s keys array, due to a read-only access, an unsafe circumstance may arise.
@@ -107,12 +107,12 @@ In the above example, $t_m$ is not allowed to free the keys immediately, instead
 \begin{enumerate}
     \item there exist a global, monotonically increasing sequence number $S$, accessible to every thread $t \in T$;
     \item $t_r$ is endowed with a local sequence number $S(t_r)$, which records the most recently observed value of the global $S$, say that in this execution $S(t_r)~=~S$;
-    \item $t_r$ begins the read-only access over $H$ (until the access ends, $t_r$ is not allow to change $S(t_r)$);
+    \item $t_r$ begins the read-only access over $H$ (until the access ends, $t_r$ is not allowed to change $S(t_r)$);
     \item $t_m$ begins the resize (migration) of $H$;
     \item $t_r$ and $t_m$ read the keys object $k$ (a pointer) associated with $H$;
     \item $t_m$ creates a new keys object $k'$, and completes the resizing (migration of keys in $k$ to $k'$);
     \item $t_m$ substitutes the key object associated with $H$, from $k$ to $k'$;
-    \item $t_m$ calls for a delayed free of $k$;
+    \item $t_m$ calls for a \emph{delayed} free of $k$;
     \item $t_m$ observes the value of $S$;
     \item $t_m$ adds a pointer to $k$ in a shared QSBR queue $Q$, and sets the QSBR goal $g$ for its deferred free to $g(k) = S + 1$;
     \item $t_r$ completes its read;
@@ -132,7 +132,7 @@ Note that thread-local (i.e.\ not shared) data structures are not affected by QS
 
 The described QSBR mechanism was located in the ``Mimalloc Page Reuse'' section of PEP~703 because it requires changes to CPython's memory allocator in order to work.
 In fact, the memory allocator employed so far in CPython, is not thread-safe.
-In order to allow allocations of objects without locking the entire interpreter, it was decided to change memory allocator entirely.
+To allow allocations of objects without locking the entire interpreter, it was decided to change memory allocator entirely.
 
 The new allocator of choice is mimalloc, a general purpose allocator with good performance and thread-safety.
 It is described in detail in~\cite{mimalloc}.
@@ -146,10 +146,10 @@ Instead, the following happens:
     \item a thread deletes an object, which happened to reside in mimalloc page $p$;
     \item $p$ is now empty;
     \item $p$ gets tagged with the global sequence number $S$ (described earlier in~\S\ref{sec:qsbr}), s.t.\ $\tau(p)~=~S$;
-    \item $p$ may be reused when a later global sequence number $S' > \tau(p)$.
+    \item $p$ may be reused when a later global sequence number $S' > \tau(p)$ is observed.
 \end{enumerate}
 
-Crucially, this modification to mimalloc ensures that threads which may still read an object in $p$ don't incur in so called use-after-free bugs, and instead necessarily read a reference count of 0, because the freed object is still stored in the same mimalloc page, which is not reused until a quiescent state is reached.
+Crucially, this modification to mimalloc ensures that threads which may still read an object in $p$ don't read unrelated objects, resulting in undefined behavior, and instead necessarily read a reference count of 0, because the freed object is still stored in the same mimalloc page, which is not reused until a quiescent state is reached.
 
 
 \section{Garbage collection}\label{sec:python-gc}
@@ -162,10 +162,10 @@ To support ``stop-the-world'' pauses a status is assigned to each thread; one of
 The ``attached'' and ``detached'' states follow the semantics that were previously assigned to the acquisition and release of the GIL\@.
 A thread that would previously acquire the GIL, transitions to the ``attached'' state; conversely, a thread that would previously release the GIL, transitions to the ``detached'' state.
 
-The GC thread transitions all other threads that were in the ``detached'' state into the ``gc'' state.
+When a GC cycle begins, the GC thread transitions all other threads that were in the ``detached'' state into the ``gc'' state.
 Threads in the ``attached'' state are requested to pause themselves and transition to the ``gc'' state.
 When all threads are in the ``gc'' state, the GC thread starts the collection cycle.
-After being done, it transitions all threads in the ``gc'' state to the ``detached'' state, and notifies them.
+Once the collection finishes, it transitions all threads in the ``gc'' state to the ``detached'' state, and notifies them.
 If a thread was in the ``detached'' state before entering the ``gc'' state, it ignores the notification.
 
 Note that ``stop-the-world'' pauses also implicitly create quiescent states (when all threads are in the ``gc'' state).
@@ -176,19 +176,19 @@ The deterministic presence of quiescent states is required for QSBR to function 
 
 Most operations in Python are not atomic, but historically some were in fact made implicitly atomic due to the presence of the GIL\@.
 For instance, calling \texttt{{list(set)}} atomically creates a list from a set, because the GIL is held for the entire duration of the call.
-The thread safety guarantees of built-in objects that were implicitly provided by the GIL, are retained as detailed in~\cite[\S Container Thread-Safety]{pep703}.
+The thread safety guarantees of built-in objects that were implicitly provided by the GIL, are retained, as detailed in~\cite[\S Container Thread-Safety]{pep703}.
 
 Note that this does not mean that all operations on built-in data structures are thread safe.
 (In fact, an operation like \texttt{{my\_dict[key] += 1}} cannot be made thread-safe, in the same way a C instruction \texttt{{my\_counter++}} cannot be made thread-safe, without external synchronization.)
 Instead, Gross proposes to simply preserve the guarantees that were in place before the GIL was removed.
 
-To achieve this goal, CPython objects are endowed with a per-object mutex.
-When an operation that was previously thread-safe because of the GIL's presence is requested, the object involved is locked and the operation performed.
-Some operations further require that two objects are locked, e.g.\ \texttt{{list(set)}}.
+To achieve this goal, CPython objects are endowed with per-object mutexes.
+When an operation that was previously thread-safe because of the GIL is requested, the object involved is locked and the operation performed.
+Some operations require that two objects are locked, e.g.\ \texttt{{list(set)}}.
 This is done by locking first the object whose memory address is lower, and then the other, to avoid deadlocks.
 
-A few operations have been selected to be executed without any locking, to improve performance.
+To improve performance, a few operations have been selected to be executed without any locking.
 They are frequently-used, read-only operations on \texttt{list} and \texttt{dict} objects (e.g.\ \texttt{{my\_list[0]}}).
 Such operations may fall back to a slower path which acquires the involved objects' mutexes, in case the container objects were concurrently modified during the read operation.
-(This optimistic fast-path requires the changes to mimalloc described in~\S\ref{sec:mimalloc}.)
-See also~\cite[\S Optimistically Avoiding Locking]{pep703}, for further details.
+(This optimistic fast-path requires the changes to mimalloc described in~\S\ref{sec:mimalloc}.
+See also~\cite[\S Optimistically Avoiding Locking]{pep703}, for further details.)

@@ -14,7 +14,7 @@ Hash tables support common operations, which are executed in expected constant t
     \item an \emph{insert} creates a new (non-previously-existing) association of a key to a value;
     \item an \emph{update} replaces the value associated with a certain key with a new value;
     \item a \emph{delete} removes a key-value association; and
-    \item a \emph{lookup} returns the value associated with a certain key.
+    \item a \emph{lookup} returns the value associated with a certain key; in particular a lookup is said to be \emph{successful} if it in fact returns said value, or alternatively it is said to \emph{fail}.
 \end{enumerate}
 
 Implementations of hash tables are generally distinguished by their choice of hash function and of collision resolution.
@@ -28,7 +28,7 @@ Common implementation of hash tables include:
     \item separate chaining, also known as closed addressing, where items are placed into linked lists called buckets and collisions are resolved by appending to the bucket.
 \end{itemize}
 
-\paragraph{Applications of Hash Tables}\label{par:applications-of-hash-tables}
+\paragraph{Applications of Hash Tables.}\label{par:applications-of-hash-tables}
 
 Hash tables are ubiquitous in computer programs.
 They are taught in entry level Computer Science courses, and form the basis of many programs.
@@ -61,10 +61,12 @@ Wait-freedom is a more stringent property:
     A method is \emph{wait-free} if it guarantees that every call finishes its execution in a finite number of steps.
 \end{quote}
 
-These two are very desirable properties of concurrent data structures: they imply that threads don't need to wait for any other thread's work to complete, before completing their own (wait-freedom), or that at least one thread can always make progress (lock-freedom).
-In terms of Amdahl's Law, the implication is that the sequential part of a program ($1 - p$) is very small, for $S$ being the speedup gained by parallelizing a program, $p$ being the parallelizable fraction of the program, and $n$ being the number of parallel processors:
+These two are very desirable properties of concurrent data structures: they imply that threads don't need to wait for any other thread's work to complete, before completing their own work (wait-freedom), or that at least one thread can always make progress (lock-freedom).
+
+In terms of Amdahl's Law, the implication is that the sequential part of a program ($1 - p$) is very small, so that the speedup scales almost linearly with the number of threads.
+That is, for $S$ being the speedup gained by parallelizing a program, $p$ being the parallelizable fraction of the program, and $n$ being the number of parallel processors:
 \[
-    S = \frac{1}{1 - p + \frac{p}{n}}
+    S = \frac{1}{1 - p + \frac{p}{n}}, \text{with} (1 - p) \ll p.
 \]
 
 The hash table design proposed in this Thesis is almost entirely lock-free.
@@ -85,7 +87,7 @@ Python has a built-in hash table, named \texttt{dict}, that is considered an int
 It is a standard type, used in virtually \emph{every} Python program, either explicitly, by directly creating a \texttt{dict} instance, or implicitly.
 In fact, the CPython interpreter may create dictionaries in order to create an instance of a class (a very frequent operation in an object-oriented language).
 The attributes of an object are almost entirely stored in a hash table, which can also be accessed directly.
-(There exist exceptions.)
+(There exist minor exceptions.)
 In fact, the set of attributes of a Python object may be altered at runtime, thus differing from the one specified in its class.
 
 An exploration on the usages of the built-in hash table has been carried out and presented in Section~\ref{sec:dict-metrics}.
@@ -99,25 +101,26 @@ A known limitation of the CPython interpreter (not the Python language) is the p
 This lock is used to protect the interpreter's internal state from concurrent mutations.
 It simplified significantly the implementation of the CPython interpreter over the years, at the cost of Python programs being often unable to efficiently use the multiple processors available in the system.
 The limitation does not affect \emph{all} CPython-interpreted programs, in the sense that several programming paradigms do not make use of multi-threading regardless of the GIL, and are thus not actually impacted by its presence.
-Examples of these paradigms are, except from obviously single-threaded programs include:
+
+Examples of these paradigms, except from obviously single-threaded programs, include:
 \begin{enumerate}
     \item co-routines-based concurrency, where a set of co-routines are executed concurrently and scheduled by the interpreter instead of the OS; and
-    \item multiprocessing-based concurrency, where the separate strands of execution are offloaded from a main CPython process to a set of child CPython processes, each having their own GIL\@.
+    \item multiprocessing-based concurrency, where the separate strands of execution are offloaded from a main process to a set of child processes, each having their own GIL\@.
 \end{enumerate}
 
 Many other programs, instead, cannot effectively cope with the presence of the GIL\@.
-Various times in the past, GIL removals have been attempted:~\cite{dabeaz-gil}~\cite[\S Related Work, Gilectomy]{pep703}~\cite[\S Related Work, PyParallel]{pep703}~\cite[\S Related Work, python-safethread]{pep703}.
-The rationale behind these several attempts is always a variation of the same theme, quoting from~\cite{pep703}:
+Various times in the past, GIL removals have been attempted: see~\cite{dabeaz-gil}, and~\cite[\S Related Work]{pep703}.
+The rationale behind them is always a variation of the same theme, quoting from~\cite{pep703}:
 \begin{quote}
     CPython's [GIL] prevents multiple threads from executing Python code at the same time.
-    The GIL is an obstacle to using multi-core CPUs from Python efficiently.
+    The GIL is an obstacle to using multicore CPUs from Python efficiently.
     [\ldots] For scientific computing tasks, this lack of concurrency is often a bigger issue than speed of executing Python code, since most of the processor cycles are spent in optimized CPU or GPU kernels.
     The GIL introduces a global bottleneck that can prevent other threads from making progress if they call any Python code.
 \end{quote}
 
 It should be noted at this point that the addition of the GIL predates the popularity of multiprocessor systems.
 (Although not yet called ``GIL,'' references to an interpreter lock can be found in source distributions of Python 1.0.1, released January 1994; available online at \url{https://www.python.org/ftp/python/src/python1.0.1.tar.gz}.\footnote{Last accessed \today.})
-At the time, it made a lot more sense to simplify the implementation of the interpreter (and still support multi-threading), rather than being capable of more performance, but almost never actually enjoy it.
+At the time, it made a lot more sense to simplify the implementation of the interpreter (and still support multi-threading), rather than being capable of more performance, but almost never enjoy it.
 
 Free-threading Python (formerly known as nogil) is the latest attempt at removing the GIL\@.
 Initially carried out by Sam Gross, it is now in CPython's official codebase.
@@ -126,10 +129,10 @@ The build of Python 3.13 that will be commonly distributed, is referenced to as 
 
 The work presented later in this Thesis is based on the original reference implementation, nogil, itself based on Python 3.9.
 This choice was made because free-threading Python had not been implemented when the work for this thesis began in October 2023.
-A plan to port this work to Python 3.13 is described in Section~\ref{subsec:compatibility-with-3.13-free-threading}.
+Porting this work to Python 3.13 is planned.
 
-What follows in the next Chapter, is an account of the free-threading-related changes to the CPython interpreter.
-The ones described here seem to be fully implemented, with the remaining work for the next release being primarily focused on resolving numerous, minor issues.
+In the next Chapter there is an account of the free-threading-related changes to the CPython interpreter.
+The ones described seem to be fully implemented, with the remaining work for the next release being primarily focused on resolving numerous, minor issues.
 
 Overall, free-threading is anticipated to result in a 6\% performance overhead for single-threaded executions and an 8\% overhead for multithreaded executions, with the higher overhead primarily due to the absence of optimizations available in single-threaded executions.
 (See the article on Gross' presentation at the 2023 Python Language Summit~\cite{python-summit-2023-nogil}.)
