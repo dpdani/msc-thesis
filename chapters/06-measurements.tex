@@ -68,7 +68,7 @@ It is also possible to observe that the increase in skew from 0.25 to 0.95, incr
 This is due to the increased contention on the reference counts of the keys in the table, whereas Growt does not need to deal with memory reclamation for its keys at all.
 
 \paragraph{Reduce.}
-We can expect these results to improve once the \texttt{reduce} method is implemented, as described in Section~\ref{subsec:reduce}: the number of atomic operations required to complete this experiment would be drastically diminished.
+We can expect these results to improve once the \texttt{reduce} method is implemented, as described in Section~\ref{sec:reduce}: the number of atomic operations required to complete this experiment would be drastically diminished.
 
 \begin{figure}
     \begin{centering}

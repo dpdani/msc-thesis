@@ -33,6 +33,7 @@ In that ``concurrent'' object-space a completely different mechanism could be em
 %For instance hazard-pointers, but several others are known in the literature.
 Objects that live in that space could be shared more effectively between threads, without hindering the performance of the application.
 The GC itself could also be designed not to be a stop-the-world GC, as is currently the case for CPython's, in order to permit fully lock-free data structure implementations.
+The two different collectors would co-exist in the same CPython process.
 
 
 \section{\texttt{AtomicDictHandle}}\label{sec:atomicdicthandle}

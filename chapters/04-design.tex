@@ -1,45 +1,103 @@
 \chapter{Design}\label{ch:design}
 
 
-\section{Python's Dictionary}\label{sec:python-dict}
+In this Chapter, we describe the design that we chose for \texttt{AtomicDict}, a hash table for the CPython interpreter.
+It is a concurrent, linear-probing, resizable hash table, with double-hashing, and split index and data tables.
+Linear probing is found to be effective on modern hardware due to its excellent cache behavior.
+The resizing scheme is drawn from Maier's hash table, and the split index and data tables from CPython's design.
+We additionally enhance this scheme with other useful features for a concurrent context: synchronous operations, reservation buffers for the data table, and iteration partitioning.
+Finally, we include methods for batching operations so as to amortize the cost of memory accesses.
 
-A lot of the basis for \texttt{AtomicDict} has been inspired from Python's \texttt{dict}.
-Namely, that the hash table itself is instead an index over another table, called the data table.
-In the latter is where the pointers to the keys and values objects reside.
+We were required to choose a double-hashing scheme because of the differences in hash computations in CPython and in Maier's hash table.
+That is, if we did not re-hash CPython-generated hashes almost all keys would collide in the first slot, given that it is often false that the hash is a ``large pseudo-random number,'' as Maier's migration scheme requires.
+(Recall Section~\ref{subsec:python-generated-hash-values}.)
 
-As described in~\cite[\S13.1]{art-mp}, we should be inclined to think that the usage of the dictionary consists of 90\% lookups, 9\% insertions, and 1\% deletes.
-In \S\ref{sec:dict-metrics} we confirm this simple rule-of-thumb.
-We further expose a counter-intuitive notion: most lookups fail.
-(See Section~\ref{sec:dict-metrics} on \texttt{\_Py\_dict\_lookup} for the full details.)
+Synchronous operations extend the obstructing nature of Maier's migration design for other operations: consistent size-retrival, and sequentially consistent iterations.
+Adding other sequentially consistent operations in the future remains possible, based on this framework.
+We therefore maintain like~\cite{maier}, but we extend to synchronous operations as well, that:
+\begin{quote}
+[\ldots]
+    The hash table works lock-free as long as no [synchronous operation] is triggered.
+\end{quote}
 
-This may be explained by the presence of iterations, that is, of operations that return the entire key-value set.
-Thus, it may be that in most cases, when a program looks up one specific key in the dictionary, it really isn't known whether the key is there or not.
-And furthermore, instead of looking up all the individual keys which are known to be there, it may be that programs prefer to iterate over all keys.
-This would result in individual lookups exhibiting a tendency to fail.
+To drive our design choices, we hold the following claims, which we confirm later in Section~\ref{sec:dict-metrics}:
+\begin{enumerate}
+    \item the common usage of a hash table consists of 90\% lookups, 9\% insertions, and 1\% deletes; and
+    \item most lookups fail.
+\end{enumerate}
 
-Based on this, we enhance the table hashing with the Robin Hood scheme, known in the literature~\cite{robin-hood,bolt}, which is especially effective in pruning searches for keys which are not in the table.
-Our approach, detailed in the following \S\ref{sec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the dictionary to this scheme: we maintain the Robin Hood invariants, described later, as long as we can do so in a lock-free manner.
+The first claim should not be surprising (see for instance~\cite[\S13.1]{art-mp}).
+The second one may be explained by the commonality of iterations; that is, of operations that return the entire key-value set.
+Instead of looking up all the individual keys which are \emph{known} to be there, it may be that Python programs prefer to iterate over all keys.
+And furthermore, it may be that when a program looks up one specific key in the dictionary, in most cases it really isn't known whether the key is there or not.
+
+Based on this claim, we enhance the table hashing with the Robin Hood scheme~\cite{robin-hood,bolt}, which is especially effective in pruning searches for keys which are not in the table.
+Our approach, detailed in the following Section~\ref{sec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the hash table to this scheme: we maintain the Robin Hood invariants as long as we can do so in a lock-free manner.
 When the maintenance of those invariants requires an increasing number of atomic operations to be carried out in the index, we instead fall back to regular linear probing.
-When doing so, before actually inserting a key that does not maintain the Robin Hood invariants, we mark the hash table as not anymore \emph{compact}.
+Before actually inserting a key that does not maintain the Robin Hood invariants, we mark the hash table as not \emph{compact}.
+Upon initialization, and after certain migrations, the hash table is marked as compact.
 A compact operation can be requested by the user to recover the Robin Hood invariants.
-This operation essentially consists of enlarging the hash table so that the invariants can be maintained.
 
-We also optionally store tags in the nodes, further stealing some bits, in order to reduce the necessity of lookups into the data table.
-The tag contains a portion of the hash of the key in the data table, when the tag does is not the same as the equivalent portion of the hash of the key looked up, the relevant entry in the data table is not visited.
+
+\section{Split Index and Data Tables}\label{sec:python-dict}
+
+The hash table itself is an index over another table, called the data table.
+In the latter is where the pointers to the keys and values objects reside.
+The index table is sparse, so as to cope with collisions and their resolution, and the data table is dense, so as to provide better performance for iterations.
+Collision resolution only addresses the index.
+We call \emph{slots} the elements of the index table, and \emph{entries} the elements of the data table.
+Slots may be occupied by \emph{nodes}.
+
+The size of a node depends on the capacity of the hash table, and it ranges from 1 to 8 bytes.
+The node contains the location of the entry it points to, the distance from its distance-0 slot, and an optional tag.
+Depending on the capacity of the hash table, the node and distance fields are rescaled as well, according to Table~\ref{tab:nodes}.
+
+\begin{table}
+    \centering\begin{tabular}{llll|llll}
+                  $\log m$ & Node & Distance & Tag & $\log m$ & Node & Distance & Tag \\
+                  \hline
+                  6        & 8    & 2        & 0   & 32       & 64   & 5        & 27  \\
+                  7        & 16   & 3        & 6   & 33       & 64   & 6        & 25  \\
+                  8        & 16   & 3        & 5   & 34       & 64   & 6        & 24  \\
+                  9        & 16   & 4        & 3   & 35       & 64   & 6        & 23  \\
+                  10       & 16   & 4        & 2   & 36       & 64   & 6        & 22  \\
+                  11       & 32   & 4        & 17  & 37       & 64   & 6        & 21  \\
+                  12       & 32   & 4        & 16  & 38       & 64   & 6        & 20  \\
+                  13       & 32   & 4        & 15  & 39       & 64   & 6        & 19  \\
+                  14       & 32   & 4        & 14  & 40       & 64   & 6        & 18  \\
+                  15       & 32   & 4        & 13  & 41       & 64   & 6        & 17  \\
+                  16       & 32   & 4        & 12  & 42       & 64   & 6        & 16  \\
+                  17       & 32   & 5        & 10  & 43       & 64   & 6        & 15  \\
+                  18       & 32   & 5        & 9   & 44       & 64   & 6        & 14  \\
+                  19       & 32   & 5        & 8   & 45       & 64   & 6        & 13  \\
+                  20       & 32   & 5        & 7   & 46       & 64   & 6        & 12  \\
+                  21       & 32   & 5        & 6   & 47       & 64   & 6        & 11  \\
+                  22       & 32   & 5        & 5   & 48       & 64   & 6        & 10  \\
+                  23       & 32   & 5        & 4   & 49       & 64   & 6        & 9   \\
+                  24       & 32   & 5        & 3   & 50       & 64   & 6        & 8   \\
+                  25       & 32   & 5        & 2   & 51       & 64   & 6        & 7   \\
+                  26       & 64   & 5        & 33  & 52       & 64   & 6        & 6   \\
+                  27       & 64   & 5        & 32  & 53       & 64   & 6        & 5   \\
+                  28       & 64   & 5        & 31  & 54       & 64   & 6        & 4   \\
+                  29       & 64   & 5        & 30  & 55       & 64   & 6        & 3   \\
+                  30       & 64   & 5        & 29  & 56       & 64   & 6        & 2   \\
+                  31 & 64 & 5 & 28 & \\
+    \end{tabular}
+    \caption{Sizes of internal fields of nodes in the index: $m$ is the capacity of the table, \emph{Node}, \emph{Distance}, and \emph{Tag} refer to their respective sizes, expressed in number of bits.}
+    \label{tab:nodes}
+\end{table}
+
+The tag contains a portion of a key's hash.
+When the tag is not the same as the equivalent portion of the hash of the key looked up, the relevant entry in the data table is not visited.
 This reduces the cost of having split index and data tables.
+That is, when a lookup visits the index, it reads the distance-0 slot of the searched key: a random address in memory.
+Then, it linearly reads the nodes in a probe, which are likely to be in the same cache line of the distance-0 slot.
+Each time a tag indicates that the node may refer to an entry containing the searched key, the entry must be read, at a different, random address in memory.
+The tag serves to amortize the cost of the second, random memory read.
 
 
 \section{Migrations}\label{sec:migrations-design}
 
-Another substantial source of inspiration for \texttt{AtomicDict} is to be found in~\cite{maier}.
-The core of the migration routine described later in~\S\ref{sec:migrations} is essentially the same as the one described in~\cite[\S5.3]{maier}.
-
-We therefore maintain, like~\cite{maier}, that:
-
-\begin{quote}
-	[\ldots] The hash table works lock-free as long as no migration is triggered.
-	% Once a migration is triggered, it is not lock-free but it happens asynchronously and it is hidden from any user of the hash table.
-\end{quote}
 
 Let us extend this concept by including other operations as well.
 We will collectively refer to migrations and other kinds of operations that break the lock-freedom of the hash table as \emph{synchronous operations}, described later in Section~\ref{sec:synchronous-operations}.
@@ -85,10 +143,10 @@ In summary, the expected number of atomic writes per inserted key is $1 + 1/4 = 
 The reservation buffer, along with other things, is stored inside an accessor-local storage.
 It contains:
 \begin{enumerate}
-	\item a mutex;
-	\item a local view of the size of the dictionary;
-	\item a flag indicating whether this accessor (thread) is participating in the current migration; and
-	\item the reservation buffer.
+    \item a mutex;
+    \item a local view of the size of the dictionary;
+    \item a flag indicating whether this accessor (thread) is participating in the current migration; and
+    \item the reservation buffer.
 \end{enumerate}
 
 The mutex itself protects the contents of the accessor storage.
@@ -133,43 +191,9 @@ In order to keep track of this distance, we steal some bits from the nodes in th
 According to~\cite[Corollary to Theorem~3]{robin-hood}, the expected number of collisions per probe for a full table is $\Theta(\log n)$, e.g.\ four for a table of size 64.
 Such is a relatively low number, thus we can steal two bits, or in general $\log \log n$ bits, from the index nodes.
 
-We do so, by following the values in Table~\ref{tab:robin-hood-nodes}.
+We do so, by following the values in Table~\ref{tab:nodes}.
 As you can observe the proposed hash table has definite minimum and maximum sizes, respectively of $2^{6} = 64$ and $2^{56} \approxeq 7.2 \times 10^{16}$.
 
-\begin{table}
-	\centering\begin{tabular}{llll|llll}
-		$\log n$ & Node & Distance & Tag & $\log n$ & Node & Distance & Tag\\
-		\hline
-		6 & 8 & 2 & 0 & 32 & 64 & 5 & 27 \\
-		7 & 16 & 3 & 6 & 33 & 64 & 6 & 25 \\
-		8 & 16 & 3 & 5 & 34 & 64 & 6 & 24 \\
-		9 & 16 & 4 & 3 & 35 & 64 & 6 & 23 \\
-		10 & 16 & 4 & 2 & 36 & 64 & 6 & 22 \\
-		11 & 32 & 4 & 17 & 37 & 64 & 6 & 21 \\
-		12 & 32 & 4 & 16 & 38 & 64 & 6 & 20 \\
-		13 & 32 & 4 & 15 & 39 & 64 & 6 & 19 \\
-		14 & 32 & 4 & 14 & 40 & 64 & 6 & 18 \\
-		15 & 32 & 4 & 13 & 41 & 64 & 6 & 17 \\
-		16 & 32 & 4 & 12 & 42 & 64 & 6 & 16 \\
-		17 & 32 & 5 & 10 & 43 & 64 & 6 & 15 \\
-		18 & 32 & 5 & 9 & 44 & 64 & 6 & 14 \\
-		19 & 32 & 5 & 8 & 45 & 64 & 6 & 13 \\
-		20 & 32 & 5 & 7 & 46 & 64 & 6 & 12 \\
-		21 & 32 & 5 & 6 & 47 & 64 & 6 & 11 \\
-		22 & 32 & 5 & 5 & 48 & 64 & 6 & 10 \\
-		23 & 32 & 5 & 4 & 49 & 64 & 6 & 9 \\
-		24 & 32 & 5 & 3 & 50 & 64 & 6 & 8 \\
-		25 & 32 & 5 & 2 & 51 & 64 & 6 & 7 \\
-		26 & 64 & 5 & 33 & 52 & 64 & 6 & 6 \\
-		27 & 64 & 5 & 32 & 53 & 64 & 6 & 5 \\
-		28 & 64 & 5 & 31 & 54 & 64 & 6 & 4 \\
-		29 & 64 & 5 & 30 & 55 & 64 & 6 & 3 \\
-		30 & 64 & 5 & 29 & 56 & 64 & 6 & 2 \\
-		31 & 64 & 5 & 28 & \\
-	\end{tabular}
-	\caption{Sizes of internal fields of nodes in the index hash table. Let $n$ be the capacity of the table, and \emph{Node}, \emph{Distance}, and \emph{Tag} refer to their respective sizes, expressed in number of bits.}
-	\label{tab:robin-hood-nodes}
-\end{table}
 
 Comparing with~\cite{robin-hood}, we have slightly modified the invariant so as to favor avoiding moving elements on a tie.
 
@@ -198,7 +222,7 @@ In effect, we have a local trigger for our migrations that doesn't require globa
 We can observe the local effect of collisions to determine that the table size is too small, and take action accordingly.
 This is not the only trigger for migrations, for a complete list refer to the relevant section.
 One may argue that a degenerate set of hashes can continuously trigger migrations.
-While this is true in principle, do observe an implication of Table~\ref{tab:robin-hood-nodes}: starting from a table capacity of $2^9 = 512$, the maximum distance is 16, while the number of nodes in a 16-byte-aligned region of memory (a quad word), is 8.
+While this is true in principle, do observe an implication of Table~\ref{tab:nodes}: starting from a table capacity of $2^9 = 512$, the maximum distance is 16, while the number of nodes in a 16-byte-aligned region of memory (a quad word), is 8.
 Therefore, the described mechanism effectively cannot be triggered indefinitely.
 
 
@@ -206,7 +230,8 @@ Therefore, the described mechanism effectively cannot be triggered indefinitely.
 
 As Micheal Maged put it in~\cite[\S2.3]{micheal-hash-tables}:
 \begin{quote}
-	[\ldots] The failure or delay of the garbage collector may prevent threads operating on lock-free objects from making progress indefinitely, thus violating lock-freedom.
+[\ldots]
+    The failure or delay of the garbage collector may prevent threads operating on lock-free objects from making progress indefinitely, thus violating lock-freedom.
 \end{quote}
 
 Such is undeniably correct, and therefore, the proposed implementation for \texttt{AtomicDict} cannot be considered lock-free, simply by virtue of the fact that its memory is managed through Python's garbage collector.

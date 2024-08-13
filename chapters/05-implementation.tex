@@ -23,22 +23,22 @@ The hash computation is deliberately omitted from Listing~\ref{lst:lookup}, beca
 
 The algorithm then looks up the index for the searched element, starting from position $d_0$, until either:
 \begin{enumerate}
-	\item the item is found;
-	\item an empty slot is found (the only probe in which the item could be found was looked at in its entirety);
-	\item the hash table is in a compact state (i.e.\ no non-compact nodes are in the index) and the search can be pruned due to the Robin Hood invariant (i.e.\ the distance of the read node is greater than what the distance of the searched node would be if it was to be found); or
-	\item the probe distance is equal to the index size.
+    \item the item is found;
+    \item an empty slot is found (the only probe in which the item could be found was looked at in its entirety);
+    \item the hash table is in a compact state (i.e.\ no non-compact nodes are in the index) and the search can be pruned due to the Robin Hood invariant (i.e.\ the distance of the read node is greater than what the distance of the searched node would be if it was to be found); or
+    \item the probe distance is equal to the index size.
 \end{enumerate}
 
 The searched key can be found if
 \begin{enumerate}
-	\item there is a node in the index whose tag corresponds to the key's hash;
-	\item the node points to an entry other than 0;
-	\item the entry's value is not \texttt{NULL};
-	\item the stored (Python-generated) hash is not different from the key's hash; and either
-	\begin{enumerate}
-		\item the pointers of the searched key and the stored key are the same (identity); or
-		\item the keys are semantically equal, based on the arbitrary logic with which those two Python objects may be deemed equal.
-	\end{enumerate}
+    \item there is a node in the index whose tag corresponds to the key's hash;
+    \item the node points to an entry other than 0;
+    \item the entry's value is not \texttt{NULL};
+    \item the stored (Python-generated) hash is not different from the key's hash; and either
+    \begin{enumerate}
+        \item the pointers of the searched key and the stored key are the same (identity); or
+        \item the keys are semantically equal, based on the arbitrary logic with which those two Python objects may be deemed equal.
+    \end{enumerate}
 \end{enumerate}
 
 Comparisons in Python are notoriously costly.
@@ -59,13 +59,13 @@ In order to restore the compact state (from $\bot$ to $\top$), a migration is re
 Suppose the check on line 69 didn't exist, and consider two threads $t_l$ and $t_i$ executing respectively a lookup for key $k$ and an insert for the same key.
 There can exist an execution s.t.:
 \begin{enumerate}
-	\item $t_l$ runs first and reaches line 8, reading that \texttt{is\_compact} $= \top$;
-	\item $t_i$ runs from start to end, turning \texttt{{meta->is\_compact}} $= \bot$, and inserting $k$ with a non-compact node; and
-	\item $t_l$ runs again, not finding the node pertaining to $k$, thus returning a lookup failure.
+    \item $t_l$ runs first and reaches line 8, reading that \texttt{is\_compact} $= \top$;
+    \item $t_i$ runs from start to end, turning \texttt{{meta->is\_compact}} $= \bot$, and inserting $k$ with a non-compact node; and
+    \item $t_l$ runs again, not finding the node pertaining to $k$, thus returning a lookup failure.
 \end{enumerate}
 Instead of this evidently faulty behavior, the check on line 69 makes the lookup restart from the beginning, so that item (3) above would be substituted with
 \begin{enumerate}
-	\item[3.] $t_l$ at first not finding $k$, sees that a non-compact insertion could have linearized, undermining its assumption that the Robin Hood invariant holds, and thus restarts from line 7, eventually finding $k$.
+    \item[3.] $t_l$ at first not finding $k$, sees that a non-compact insertion could have linearized, undermining its assumption that the Robin Hood invariant holds, and thus restarts from line 7, eventually finding $k$.
 \end{enumerate}
 
 Another similar check can be found on lines 72 and 79, where concurrent migrations are considered.
@@ -78,29 +78,28 @@ Towards the end of Listing~\ref{lst:lookup}, at lines 68--94, is where the respo
 Given the fact that this routine is also employed elsewhere (see Listing~\ref{lst:delete}, line 8), it would be insufficient to return a simple boolean value.
 Instead the following is returned, which completely describes the state of the relevant memory pertaining to the search key:
 \begin{enumerate}
-	\item an \texttt{error} flag, if $\top$, the rest of the values returned are undefined;
-	\item a \texttt{found} flag, if $\bot$, the returned values below are undefined;
-	\item an integer \texttt{position}, indicating at which slot of the index the relevant node was found;
-	\item an \texttt{{is\_compact}} flag, indicating whether the node was found to be compact in the index;
-	\item a \texttt{node} structure, with the node that was found;
-	\item an \texttt{{entry\_p}} pointer, to the relevant data table entry; and
-	\item an \texttt{entry} structure, with the values read from the data table entry.
+    \item an \texttt{error} flag, if $\top$, the rest of the values returned are undefined;
+    \item a \texttt{found} flag, if $\bot$, the returned values below are undefined;
+    \item an integer \texttt{position}, indicating at which slot of the index the relevant node was found;
+    \item an \texttt{{is\_compact}} flag, indicating whether the node was found to be compact in the index;
+    \item a \texttt{node} structure, with the node that was found;
+    \item an \texttt{{entry\_p}} pointer, to the relevant data table entry; and
+    \item an \texttt{entry} structure, with the values read from the data table entry.
 \end{enumerate}
 
 \lstinputlisting[
-	numbers=left,
-	stepnumber=5,
-	numberfirstline=true,
-	language={C},
-	caption={Lookup Operation},
-	label={lst:lookup}
+    numbers=left,
+    stepnumber=5,
+    numberfirstline=true,
+    language={C},
+    caption={Lookup Operation},
+    label={lst:lookup}
 ]{listings/lookup.c}
 
 \subsection{Linearization}\label{subsec:lookup-linearization}
 
 A successful lookup linearizes on line 41, where the key and value are read.
 Failed lookups, i.e.\ lookups that don't find the searched key, linearize on line 15, where a node is read from the index, be it an empty node, or a node $n$ whose distance-0 position $d_0(n) >$ distance-0 position of the searched key.
-
 
 \paragraph{Lock-freedom.}
 
@@ -120,7 +119,7 @@ In fact, the check at line 69 makes it so that when a concurrent insert sets the
 
 The \texttt{ExpectedInsertOrUpdate} routine shown in Listing~\ref{lst:insert} departs from Maier's design of~\cite[Algorithm~1]{maier} in that it doesn't expect the user to provide an update function, but rather mimics more the compare and set routines of other atomic data structures: it takes as input the expected and desired values, and it returns the value that was stored before the update was performed (or a special \texttt{{NOT\_FOUND}} object).
 If the expected value was not the stored value (or the compare and set low-level call failed and the newly read value then differed from the expected one), then a special \texttt{{EXPECTATION\_FAILED}} object is returned.
-A routine that more closely resembles Maier's Algorithm~1, is described later in~\S\ref{sec:aggregate}, based on the one discussed here.
+A routine that more closely resembles Maier's Algorithm~1, is described later in~\S\ref{sec:reduce}, based on the one discussed here.
 
 There's also another special value called \texttt{ANY} that can be used as the expected value to signify that whatever the current value is, even an absent value, it should be replaced with the desired value.
 Returning the previous value, in conjunction with \texttt{ANY} as the expected value, also serves to reuse the same routine to behave like a swap, rather than a CAS\@.
@@ -137,15 +136,15 @@ Here, it is worth mentioning that this routine is not directly exposed, and is i
 Instead of calling this function directly, a user of \texttt{AtomicDict} is expected to call different Python idioms, which all internally call \texttt{ExpectedInsertOrUpdate}; namely:
 
 \begin{enumerate}
-	\item \texttt{{d[k] = v}}, eq. \texttt{{ExpectedInsertOrUpdate(\ldots, k, \ldots, ANY, v, \ldots)}};
-	\item \texttt{{d.compare\_and\_set(k, exp, des)}}, eq. \texttt{{ExpectedInsertOrUpdate(\ldots, k, \ldots, exp, des, \ldots)}}, which raises an exception when the expected value was not the stored value;
-	\item \texttt{{d.swap(k, v)}}, eq. \texttt{{ExpectedInsertOrUpdate(\ldots, k, \ldots, ANY, v, \ldots)}}, which is similar to (1) except it also exposes the previous value.
-	(Not yet implemented.)
+    \item \texttt{{d[k] = v}}, eq. \texttt{{ExpectedInsertOrUpdate(\ldots, k, \ldots, ANY, v, \ldots)}};
+    \item \texttt{{d.compare\_and\_set(k, exp, des)}}, eq. \texttt{{ExpectedInsertOrUpdate(\ldots, k, \ldots, exp, des, \ldots)}}, which raises an exception when the expected value was not the stored value;
+    \item \texttt{{d.swap(k, v)}}, eq. \texttt{{ExpectedInsertOrUpdate(\ldots, k, \ldots, ANY, v, \ldots)}}, which is similar to (1) except it also exposes the previous value.
+    (Not yet implemented.)
 \end{enumerate}
 
 In regards to (2) above, returning a boolean value is generally considered the standard.
 Such is what the hardware primitive essentially does, and also what other languages such as Java do.
-Nevertheless, in order to favor the usage of the Aggregate routine of~\S\ref{sec:aggregate}, which correctly implements a generic mutation to a value, it was chosen to expose this behavior instead.
+Nevertheless, in order to favor the usage of the Aggregate routine of~\S\ref{sec:reduce}, which correctly implements a generic mutation to a value, it was chosen to expose this behavior instead.
 That is, simpler usages, such as incrementing a counter, or any other ``aggregations,'' should instead employ the more appropriate \texttt{aggregate} method.
 This \texttt{compare\_and\_set} method is thus intended to be used in scenarios where the expectation is ``taken for granted,'' and would otherwise require debugging if unmet; that is, where the failure of the expectation has more severe impacts than mere contentious access.
 Do note that this design does not pertain to any correctness or performance goal; it, instead, has to do with the programmer's ergonomics in the usage of this lower-level routine.
@@ -155,25 +154,25 @@ Whether or not this is actually simpler to use remains to be seen.
 The \texttt{ExpectedInsertOrUpdateCloseToDistance0} sub-routine, called at line 35, is omitted for brevity.
 What it does can be described with the following steps:
 \begin{enumerate}
-	\item consider the nodes in the 16-byte-aligned region of memory the $d_0$ slot is part of, in sequence, starting from $d_0$:
-	\begin{enumerate}
-		\item if an empty slot is found either set \texttt{expectation} $=\bot$, if \texttt{expected} is neither \texttt{ANY} nor \texttt{{NOT\_FOUND}}, or attempt to insert the node in keeping with the Robin Hood invariant;
-		\item if a non-empty slot is found, check the tag, and possibly call the \texttt{ExpectedUpdateEntry} routine;
-	\end{enumerate}
-	\item set the \texttt{{must\_grow}} flag if the node would be inserted at a distance greater than the current maximum distance (and avoid modifying the index);
-	\item set the \texttt{done} flag accordingly.
+    \item consider the nodes in the 16-byte-aligned region of memory the $d_0$ slot is part of, in sequence, starting from $d_0$:
+    \begin{enumerate}
+        \item if an empty slot is found either set \texttt{expectation} $=\bot$, if \texttt{expected} is neither \texttt{ANY} nor \texttt{{NOT\_FOUND}}, or attempt to insert the node in keeping with the Robin Hood invariant;
+        \item if a non-empty slot is found, check the tag, and possibly call the \texttt{ExpectedUpdateEntry} routine;
+    \end{enumerate}
+    \item set the \texttt{{must\_grow}} flag if the node would be inserted at a distance greater than the current maximum distance (and avoid modifying the index);
+    \item set the \texttt{done} flag accordingly.
 \end{enumerate}
 
 The \texttt{ExpectedUpdateEntry} sub-routine is also omitted for brevity; its implementation resembles the \texttt{{check\_entry}} part of the \texttt{Lookup} routine (Listing~\ref{lst:lookup}, lines 38--65), but also performing an update, possibly signaling that the expectation failed.
 
 
 \lstinputlisting[
-	numbers=left,
-	stepnumber=5,
-	numberfirstline=true,
-	language={C},
-	caption={ExpectedInsertOrUpdate Operation},
-	label={lst:insert}
+    numbers=left,
+    stepnumber=5,
+    numberfirstline=true,
+    language={C},
+    caption={ExpectedInsertOrUpdate Operation},
+    label={lst:insert}
 ]{listings/insert.c}
 
 \subsection{Linearization}\label{subsec:insert-linearization}
@@ -201,12 +200,12 @@ Later, we will not specify this caveat of lock-freedom holding only when no migr
 \texttt{ExpectedInsertOrUpdate} is not wait-free.
 An insert may in fact be delayed in several points:
 \begin{enumerate}
-	\item when making a reservation in the data table (which is not shown, for brevity, in Listing~\ref{lst:insert});
-	\item when failing to make use of the insert quick-path of line 25;
-	\item when the CAS inside the \texttt{ExpectedInsertOrUpdateCloseToDistance0} sub-routine fails, due to the index nodes involved being contended;
-	\item when a non-compact node fails to be inserted on line 56, again due to contention on the index position;
-	\item when a concurrent update or deletion changes the already-present key (thus, this would be an update, rather than an insert); and
-	\item when the check on line 103--104 fails, due to another thread changing the index state to non-compact.
+    \item when making a reservation in the data table (which is not shown, for brevity, in Listing~\ref{lst:insert});
+    \item when failing to make use of the insert quick-path of line 25;
+    \item when the CAS inside the \texttt{ExpectedInsertOrUpdateCloseToDistance0} sub-routine fails, due to the index nodes involved being contended;
+    \item when a non-compact node fails to be inserted on line 56, again due to contention on the index position;
+    \item when a concurrent update or deletion changes the already-present key (thus, this would be an update, rather than an insert); and
+    \item when the check on line 103--104 fails, due to another thread changing the index state to non-compact.
 \end{enumerate}
 Note that the delays here mentioned do not cause obstruction for a running \texttt{ExpectedInsertOrUpdate}, which remains lock-free, notwithstanding the contention issues listed above.
 
@@ -222,17 +221,16 @@ Being such a conceptually simple semantics for deletes, this is the part that ha
 
 After the delete is linearized, the following housekeeping actions are taken:
 \begin{enumerate}
-	\item the relevant index node is exchanged for a tombstone, so as to avoid requiring lookups from visiting the data table entry;
-	\item a synchronous operation may be started so as to defragment the data table; and
-	\item in addition to the above synchronous operation, a shrink migration may be triggered as well, if the estimated size, given by the upper-bound formula in~\S\ref{sec:approximate-size}, is less than the minimum fill ratio (i.e.\ 1/3 by default.).
+    \item the relevant index node is exchanged for a tombstone, so as to avoid requiring lookups from visiting the data table entry;
+    \item a synchronous operation may be started so as to defragment the data table; and
+    \item in addition to the above synchronous operation, a shrink migration may be triggered as well, if the estimated size, given by the upper-bound formula in~\S\ref{sec:approximate-size}, is less than the minimum fill ratio (i.e.\ 1/3 by default.).
 \end{enumerate}
 
 The three additional steps are carried out in the delete routine, because:
 \begin{itemize}
-	\item deletes are considered infrequent, so adding cost to them and relieving other routines of this work is considered to be a decrease in cost overall (as is the case for the tombstone exchange); and
-	\item if deletes happened to be frequent instead, it would likely be that the program expects the memory consumption of the hash table to decrease (which is what we do by defragmenting the data table and triggering a shrink migration).
+    \item deletes are considered infrequent, so adding cost to them and relieving other routines of this work is considered to be a decrease in cost overall (as is the case for the tombstone exchange); and
+    \item if deletes happened to be frequent instead, it would likely be that the program expects the memory consumption of the hash table to decrease (which is what we do by defragmenting the data table and triggering a shrink migration).
 \end{itemize}
-
 
 \subsection{Exchanging the node for a tombstone}\label{subsec:exchanging-node-tombstone}
 
@@ -245,7 +243,6 @@ The \texttt{LookupEntry} routine, omitted for brevity, is essentially equivalent
 
 The tombstone node is possibly moved further down its probe, if such is possible within a single atomic write; that is, as long as the atomic write is of at most 16-bytes, and is 16-bytes aligned.
 
-
 \subsection{Defragmenting the data table}\label{subsec:defragmenting}
 
 Keep a per-page deletions counter noted as $\delta(p)$, for some page $p$.
@@ -254,35 +251,34 @@ If $\delta(p) \geq \frac{|P|}{2}$, initiate a merge.
 
 The following description is what occurs after a merge operation has been triggered.
 \begin{enumerate}
-	\item Look for another page $p'$, distinct from the page from which the merge was triggered, s.t. $\delta(p') \geq \frac{|P|}{2}$.
-	\begin{enumerate}
-		\item Since page number 0 cannot be cleared because it hosts entry number 0, which has to remain for the correctness of tombstones, start the search from page number 1 (these checks are omitted for brevity from Listing~\ref{lst:delete}); and
-		\item if no such page can be found, abort the merge operation.
-	\end{enumerate}
-	\item W.l.o.g.\ call $p_1$ the lower-numbered page, and $p_2$ the other.
-	\item Let $p_0$ be the lowest non-empty page in the data table.
-	It may be that $p_0 \equiv p_1$, and that is fine.
-	\item Move the elements found in $p_0$ into $p_2$.
-	When $p_2$ becomes full, move the remaining elements into $p_1$ instead.
-	(Note that if $p_0 \equiv p_1$, then $|p_0| = |p_1| \leq \frac{|P|}{2}$, and also $|p_2| \leq \frac{|P|}{2}$, therefore $|p_0| + |p_2| \leq |P|$.
-	Thus, all elements from $p_0 \equiv p_1$ will be moved into $p_2$.)
-	That is, $\forall e \in p_0$:
-	\begin{enumerate}
-		\item clear $e \in p_0$;
-		\item write $e$ into a free slot of $p_2$ (possibly overwriting deleted slots);
-		\item if $e$ is a reservation with unoccupied slots left:
-		\begin{enumerate}
-			\item write the unoccupied slots too;
-			\item look into every accessor's storage (this is already a Synchronous Operation) and edit the relevant reservation to point to the new slot; and
-		\end{enumerate}
-		\item update the relevant node in the index to point to the new location.
-	\end{enumerate}
-	\item Update $\delta(p_0)$, $\delta(p_1)$, and $\delta(p_2)$ accordingly.
+    \item Look for another page $p'$, distinct from the page from which the merge was triggered, s.t. $\delta(p') \geq \frac{|P|}{2}$.
+    \begin{enumerate}
+        \item Since page number 0 cannot be cleared because it hosts entry number 0, which has to remain for the correctness of tombstones, start the search from page number 1 (these checks are omitted for brevity from Listing~\ref{lst:delete}); and
+        \item if no such page can be found, abort the merge operation.
+    \end{enumerate}
+    \item W.l.o.g.\ call $p_1$ the lower-numbered page, and $p_2$ the other.
+    \item Let $p_0$ be the lowest non-empty page in the data table.
+    It may be that $p_0 \equiv p_1$, and that is fine.
+    \item Move the elements found in $p_0$ into $p_2$.
+    When $p_2$ becomes full, move the remaining elements into $p_1$ instead.
+    (Note that if $p_0 \equiv p_1$, then $|p_0| = |p_1| \leq \frac{|P|}{2}$, and also $|p_2| \leq \frac{|P|}{2}$, therefore $|p_0| + |p_2| \leq |P|$.
+    Thus, all elements from $p_0 \equiv p_1$ will be moved into $p_2$.)
+    That is, $\forall e \in p_0$:
+    \begin{enumerate}
+        \item clear $e \in p_0$;
+        \item write $e$ into a free slot of $p_2$ (possibly overwriting deleted slots);
+        \item if $e$ is a reservation with unoccupied slots left:
+        \begin{enumerate}
+            \item write the unoccupied slots too;
+            \item look into every accessor's storage (this is already a Synchronous Operation) and edit the relevant reservation to point to the new slot; and
+        \end{enumerate}
+        \item update the relevant node in the index to point to the new location.
+    \end{enumerate}
+    \item Update $\delta(p_0)$, $\delta(p_1)$, and $\delta(p_2)$ accordingly.
 \end{enumerate}
 
 The relevant pseudocode can be found in Listing~\ref{lst:delete}, lines 40--87.
 Note that step (4) above is summarized on line 70.
-
 
 \subsection{Triggering a shrink migration}\label{subsec:triggering-a-shrink}
 
@@ -291,12 +287,11 @@ It would cause the size of the index and of the pages array to be reduced, if us
 
 The thread caller of \texttt{Delete} is responsible for actually initiating the shrink migration, after having yielded its accessor's lock.
 
-
 \subsection{The current implementation}\label{subsec:the-current-implementation}
 
 The current implementation, which is not shown here, is essentially similar to the one described so far, but instead of the page-merge algorithm, defragmentation is carried out by swapping entries.
 Which is the implementation that can be found in~\cite{cereggii}, available online at \url{https://github.com/dpdani/cereggii/blob/40eb43084232263716dc5e7fe753253fdc042e6b/src/cereggii/atomic_dict/delete.c}.\footnote{%
-	Last accessed \today.
+    Last accessed \today.
 }
 When a key is deleted, its entry is swapped with another entry stored at a lower-numbered location, so as to maintain the possibility of eventually incrementing the deleted pages counter ($P_D$ in~\S\ref{sec:approximate-size}).
 Notice how the necessity for defragmentation remains, in order to provide a fairly cheap and wait-free approximation of the size, which is required by the \texttt{Delete} and \texttt{ExpectedInsertOrUpdate} routines in order to know when to trigger a migration.
@@ -319,12 +314,12 @@ This renders the implementation of deletes much harder to explain and to maintai
 It also doesn't provide any immediate benefit: memory reclaim is deferred to the next shrink anyway, whereas merges being Synchronous Operations (albeit shorter operations compared to shrinks), means that memory is reclaimed sooner and more frequently.
 
 \lstinputlisting[
-	numbers=left,
-	stepnumber=5,
-	numberfirstline=true,
-	language={C},
-	caption={Delete Operation},
-	label={lst:delete}
+    numbers=left,
+    stepnumber=5,
+    numberfirstline=true,
+    language={C},
+    caption={Delete Operation},
+    label={lst:delete}
 ]{listings/delete.c}
 
 \subsection{Linearization}\label{subsec:delete-linearization}
@@ -337,7 +332,6 @@ With the \texttt{Lookup} routine being already shown linearizable in~\S\ref{subs
 
 \texttt{Delete} is linearizable also in spite of concurrent deletions of the same key $k$.
 Under such circumstances, the successful CAS of line 18 by the one successful invocation linearizes that call to \texttt{Delete}, as above; while the failed CAS of but the same line 18, will result into the visiting of line 22, forcing the delete operation to be retried, and then fail, as aforementioned.
-
 
 \subsection{Lock-freedom}\label{subsec:delete-lock-freedom}
 
@@ -359,19 +353,19 @@ Thus, in order to allow for more keys to be inserted, or for memory to be reclai
 \texttt{AtomicDict} allows for three kinds of migrations: \emph{grow}, \emph{shrink} and \emph{compact}.
 Respectively, they allow:
 \begin{enumerate}
-	\item to double the maximum possible size of the key-set,
-	\item to halve it, and
-	\item in contrast with the other two, to recover the Robin Hood invariants, which may have been lost due to our Lazy Robin Hood approach, described in~\S\ref{sec:lazy-robin-hood}.
+    \item to double the maximum possible size of the key-set,
+    \item to halve it, and
+    \item in contrast with the other two, to recover the Robin Hood invariants, which may have been lost due to our Lazy Robin Hood approach, described in~\S\ref{sec:lazy-robin-hood}.
 \end{enumerate}
 The three kinds are slightly different from each other in their implementation, but are externally signalled in the same manner: by setting a field in the current metadata to show that there is a migration in progress.
 
 Migrations are executed entirely or in part within a Synchronous Operation.
 The application of a Synchronous Operation relieves the implementation from being concerned with the following problem, and its variations.
 \begin{enumerate}
-	\item A thread $t_i$ is performing an insertion of a key $k$.
-	\item Another thread $t_m$ is performing a migration to a newly allocated index.
-	\item $t_i$ reaches its linearization point before the migration completes.
-	\item Has $k$ been migrated?
+    \item A thread $t_i$ is performing an insertion of a key $k$.
+    \item Another thread $t_m$ is performing a migration to a newly allocated index.
+    \item $t_i$ reaches its linearization point before the migration completes.
+    \item Has $k$ been migrated?
 \end{enumerate}
 Instead, it becomes much easier to implement, and maintain, a logic in which thread $t_m$ initiates a Synchronous Operation, so that all other threads either complete their mutation before the migration starts, or know that a migration is in progress and help carry it out before resuming their work.
 This is effectively the same approach expressed in~\cite[\S5.3.2, Preventing Concurrent Updates to Ensure Consistency]{maier}.
@@ -383,7 +377,6 @@ A compact, or shrink migration will instead try to reduce the size of the pages 
 Depending on the migration's current state, it may be that the update is referred by an index node to a wrong entry in the data table.
 Therefore, updates are obstructed by migrations, in the same manner as inserts.
 
-
 \subsection{Metadata}\label{subsec:metadata}
 Most of the \texttt{AtomicDict} data is stored inside its metadata, which holds references to the index, and to the data table, among other useful things.
 An external observer may perceive a migration as a change from a prior metadata object to a new one.
@@ -391,15 +384,15 @@ We will also refer to them as the current generation metadata and its successor,
 
 In addition to the aforementioned pointers, which are the core parts of metadata objects, are also stored therein:
 \begin{enumerate}
-	\item the size of the hash table (a power of 2);
-	\item the pages counters (see~\S\ref{sec:approximate-size});
-	\item the \texttt{is\_compact} flag;
-	\item various information about the sizes of index nodes and their internal parts (see Table~\ref{tab:robin-hood-nodes});
-	\item a pointer to the next metadata generation;
-	\item the migration leader thread id (also see~\S\ref{sec:free-threading});
-	\item the next node to migrate counter (or, in Maier's terminology, the blocks counter, that is, the next node to migrate is effectively the first node in what Maier denotes as a block);
-	\item three atomic events used to signal the progress of the three phases of migrations (one metadata's events are only used for the migration which sees it as the current generation, since they are single-use by design, also see~\S\ref{sec:free-threading}); and
-	\item other miscellaneous information.
+    \item the size of the hash table (a power of 2);
+    \item the pages counters (see~\S\ref{sec:approximate-size});
+    \item the \texttt{is\_compact} flag;
+    \item various information about the sizes of index nodes and their internal parts (see Table~\ref{tab:nodes});
+    \item a pointer to the next metadata generation;
+    \item the migration leader thread id (also see~\S\ref{sec:free-threading});
+    \item the next node to migrate counter (or, in Maier's terminology, the blocks counter, that is, the next node to migrate is effectively the first node in what Maier denotes as a block);
+    \item three atomic events used to signal the progress of the three phases of migrations (one metadata's events are only used for the migration which sees it as the current generation, since they are single-use by design, also see~\S\ref{sec:free-threading}); and
+    \item other miscellaneous information.
 \end{enumerate}
 
 The metadata object is stored inside an \texttt{AtomicRef}, described in detail in Appendix~\ref{ch:atomic-reference}.
@@ -410,6 +403,7 @@ This behavior is important for metadata objects, because it may be that a thread
 Thus, not having QSBR for metadata objects would make the implementation of \texttt{AtomicDict} subject to use-after-free bugs.
 
 \subsection{Migration Leader}\label{subsec:migration-leader}
+
 \subsection{Migration Phases}\label{subsec:migration-phases}
 
 
@@ -417,8 +411,8 @@ Mutation operations are blocked while a migration is in progress.
 This is done by starting a Synchronous Operation.
 The first phase of a migration is to prepare the new generation metadata.
 \begin{itemize}
-	\item In a shrink or compact migration, the metadata is ready after the leader thread allocates it, creates the new index, clears it (i.e.\ \texttt{memset(\ldots, 0, \ldots)}), allocates the new, smaller pages array, and copies the non-deleted pages into the new pages array.
-	\item In a grow migration, the metadata is ready after the leader thread allocates it, creates the new index, and copies the pages array into a new, larger pages array.
+    \item In a shrink or compact migration, the metadata is ready after the leader thread allocates it, creates the new index, clears it (i.e.\ \texttt{memset(\ldots, 0, \ldots)}), allocates the new, smaller pages array, and copies the non-deleted pages into the new pages array.
+    \item In a grow migration, the metadata is ready after the leader thread allocates it, creates the new index, and copies the pages array into a new, larger pages array.
 \end{itemize}
 After the new generation metadata is ready, the follower threads may start migrating the nodes from the current generation to the new one.
 
@@ -429,7 +423,6 @@ In order for this to work, we need to know in advance the amount of threads that
 Thus, we cannot allow the possibility of new accessors joining the migration process after it has started.
 This is not necessary for shrink and compact migrations because they use a different semantic in order to determine whether the migration has completed.
 Namely, that the generation tag of each page in the data table is set to the new generation.
-
 
 \subsection{Slow Migrations}\label{subsec:slow-migrations}
 
@@ -444,7 +437,6 @@ After having visited all pages, it runs a second visit to check if all of the pa
 If it does observe that, then it signals to the other accessors that the node migration phase is complete.
 
 A call to the \texttt{compact} method triggers a compact migration, and such is the only mean to trigger a compact migration, but then, if the new generation meta is still not compact, further grow migrations are triggered, until a generation is reached s.t.\ the resulting meta is compact.
-
 
 \subsection{Quick Migrations}\label{subsec:quick-migrations}
 During the quick migration instead, a participating thread sets a local ``participation'' flag to 1 when joining the migration process (initially set to 0 by the leader for all accessors).
@@ -477,19 +469,19 @@ An approximation of the number of elements stored in the hash table is inferred 
 Three separate, atomic counters are kept:
 
 \begin{itemize}
-	\item the greatest allocated page $P_A$;
-	\item the greatest deleted page $P_D$; and
-	\item the greatest refilled page $P_R$.
+    \item the greatest allocated page $P_A$;
+    \item the greatest deleted page $P_D$; and
+    \item the greatest refilled page $P_R$.
 \end{itemize}
 
 The $P_A$ counter is also used to keep track of the used portion of the pages array, and is the one used when a thread makes a new reservation into the data table; possibly, triggering the allocation of a new page and increasing $P_A$.
 
-The three counters serve to provide a rough estimate on the number of elements currently stored: as new elements are inserted new data table pages need to be allocated, and when numerous elements are deleted they get defragmented into their own pages, before the pages get eventually freed, or be refilled.
-Note that initially, when there are yet to be inserted any elements, their respective values will be 0, -1, and -1.
+The three counters serve to provide a rough estimate on the number of elements currently stored: as new elements are inserted new data table pages need to be allocated, and when numerous elements are deleted they get defragmented into their own pages, before the pages are eventually freed, or refilled.
+Initially, their respective values will be 0, -1, and -1.
 
 So an upper bound for the number of elements contained in the dictionary is:
 \[
-(P_A - P_D + P_R) \times |P|
+    (P_A - P_D + P_R) \times |P|
 \]
 
 The bound is then also refined by visiting the $P_A$ and $P_R$ pages, decrementing it of the amount of entries that weren't filled in those pages.
@@ -501,43 +493,33 @@ The mean (floor division by 2) of the lower and upper bounds is then reported to
 This routine is also employed by the insert and delete routines to decide when to trigger migrations.
 
 
-\paragraph{Linearization and lock-freedom.}
-This is trivially a lock-free algorithm.
-The linearization here depends on the three reads required for $P_A$, $P_D$, and $P_R$, as well as the $\Theta(t)$ reads required to traverse the accessors' storages.
-
-???
-
 \section{Consistent size}\label{sec:consistent-size}
 
-Given that the linearization of the above approximation of the size of the hash table is sub-optimal at best, it was decided that there would also be a definite, sequentially consistent computation of the hash table size.
-This is achieved by using thread-local size counters: each thread keeps track of how many items it has inserted, incrementing its local counter, and how many items it has deleted, decrementing its local counter.
+To provide a sequentially consistent computation of the hash table size, each accessor has a thread-local size counter: each thread keeps track of how many items it has inserted, incrementing its local counter, and how many items it has deleted, decrementing its local counter.
 (Thus, it may be that one thread's local counter is negative.)
-The thread-local counters are kept in each thread's accessor's storage, and are recorded by using regular reads and writes: they are protected by the accessor's lock.
+The thread-local counters are mutated using regular reads and writes: they are protected by the accessor's lock.
 
-Upon request, a Synchronous Operation (\S\ref{sec:synchronous-operations}) to safely sum the thread-local counters begins.
+Upon request, a Synchronous Operation to safely sum the thread-local counters, begins.
 The local counters are reset to 0 before the operation ends.
 The result is cached into the \texttt{AtomicDict} and a dirty flag is reset in order to avoid restarting a Synchronous Operation at every call, if no insertions or deletions marked the cached value as dirty.
-The cached value is stored with a Python integer.
-Upon a new request, if the dirty flag is set, the sum of the thread-local counters and the cached value is computed and stored.
+The cached value is stored with a CPython integer.
+Upon a new request, if the dirty flag is unset, the cached value is returned.
 
 Note that it is much faster to keep thread-local counters and then acquire locks to read them, rather than to keep a shared counter.
 Using a Synchronous Operation for this also implies that its semantics are trivially sequentially consistent.
 It can be argued that to retrieve this consistent size, there is a missed opportunity cost related to the exclusion of all other threads from using the hash table.
 While true in principle, it should be noted that this is a $\Theta(t)$ operation, thus independent of the table size, and generally quite fast.
-For these reasons, this is the routine that is exposed by default, i.e.\ when calling \texttt{{len(AtomicDict(\ldots))}}.
-If a program cannot withstand the added cost of mutual exclusion (perhaps because it frequently asks for the size of the hash table while this is being concurrently mutated), it is still possible to access the approximate size described in the above Section, which is quite accurate and lock-free.
-Additionally, under the situation of high-frequency concurrent mutations, it may make more sense to retrieve an approximation of the size rather than a sequentially consistent size.
-The sequentially consistent size computed during a call to this routine, may be invalidated immediately upon returning its output.
+For these reasons, this is the routine that is exposed by default, i.e.\ when calling \texttt{{len(AtomicDict())}}.
+If a program cannot withstand the added cost of mutual exclusion, perhaps because it frequently asks for the size of the hash table while this is being concurrently mutated, it is still possible to retrieve the approximate size described in the above Section, which is quite accurate and lock-free.
+Under high-frequency concurrent mutations, it may make more sense to retrieve an approximation of the size rather than a sequentially consistent size: it may be invalidated immediately upon returning the output, so it would never actually be precise.
 
-Notwithstanding the limitation on the number of nodes that can be present into the described hash table at any given time ($2^{56}$), as prescribed by Table~\ref{tab:robin-hood-nodes}, a counter of 64-bits is not necessarily sufficient.
+Notwithstanding the limitation on the number of nodes that can be present into the described hash table at any given time ($2^{56}$), as prescribed by Table~\ref{tab:nodes}, a counter of 64-bits is not necessarily sufficient.
 Consider the situation where two threads concurrently insert and delete $2^{64}$ items, so that one thread only performs insertions, and the other only performs deletions (or any other equivalent situation).
 Care then needs to be taken in order to avoid running into integer overflows or underflows, a notorious problem in C code.
 Before such an event occurs, the thread that detects it (its local counter is \texttt{MAX\_INT64} during an insert, or \texttt{MIN\_INT64} during a delete), the thread repeatedly tries to add (CAS) its local counter to the \texttt{AtomicDict}'s cached value, while holding its local accessor's storage mutex.
 This way, no Synchronous Operation can begin, and it is safe to add the protected value, before resetting it to 0.
 If another thread finds itself in the same condition, the competing threads will serialize based on the CAS to the cached counter.
 
-\paragraph{Linearization and non-lock-freedom.}
-With this being a Synchronous Operation, it is trivial to see that it is not lock-free, and its linearization follows that of other Synchronous Operations.
 
 \section{Batch lookup}\label{sec:batch-lookup}
 
@@ -561,31 +543,30 @@ assert result == {
 }
 \end{lstlisting}
 
-The \texttt{cereggii.NOT\_FOUND} object is a special, global object that cannot be inserted into \texttt{AtomicDict} (as previously described in~\S\ref{sec:insert-or-update}).
+The \texttt{cereggii.NOT\_FOUND} object is a special, global object that cannot be inserted into \texttt{AtomicDict} (as previously described in Section~\ref{sec:insert-or-update}).
 The fact that it is in the output means, as its name implies, that the key was not in the dictionary.
 
 The operation involves prefetching each distance-0 location of the keys in the batch.
 This results in an amortization of the cost of individual memory accesses: if the number of prefetches issued is sufficiently large (how large depends on the hardware), then the processor will be stalled waiting for the first read, while the subsequent ones will be read from the cache without incurring in the cost of main memory access.
-This behavior is cheaper-by-comparison: it is cheaper to prefetch several keys, possibly blocking at the first one read, than to block at every read.
-
-NUMA architectures will enjoy this mechanism particularly: when prefetches are issued at remote memory addresses, the comparative cost of the amortized reads is much less than the sum of the costs of each individual read.
-
-Concerning NUMA architectures, it is generally also possible to argue that the cost of a remote access may be hidden by the possibly many local memory accesses that precede it.
-Such is not our case: the index, which is allocated as a contiguous array, will reside entirely in \emph{one} NUMA node.
-Thus, a thread accessing the index will either only issue operations to remote memory, or to local memory.
-NUMA support is thus limited: the presence of a single shared index makes it impossible to efficiently make use of memory partitioning.
+This behavior is cheaper-by-comparison: it is cheaper to prefetch several keys, possibly blocking at the first one, than to block at every read.
 
 The submitted batch is subdivided into chunks of a configurable size.
 This is intended to prevent memory over-fetching.
 That is, the cache of an individual processor may become overly filled with the prefetched portions of the index, and the hardware will proceed to evict lines of cache before they are actually read by the lookups that requested them.
 
-\paragraph{\texttt{AtomicShardedDict}.}
-A further endeavor may be carried out so as to provide an \texttt{AtomicShardedDict} class which creates its own pool of threads, bound to individual NUMA nodes, and affords access to the hash table shards to those threads only.
-The partitioning of a hash table into several shards, each of which is managed by one or multiple threads associated to a single NUMA node, requires that any given key must be uniquely assigned to one shard (e.g.\ by using the least-significant bits of the hash to associate a key with a shard).
-Mimicking the design of DRAM-HiT, the user thread would submit requests to a message queue which is consumed by the threads associated with the relevant shard.
-This is resembling of the design of~\cite{dramhit}, though this design need not be asynchronous as in~\cite{dramhit} in order to gain the speed-up of stronger memory associativity.
-It can be implemented by making use of the current implementation of \texttt{AtomicDict}, such that one shard of \texttt{AtomicShardedDict} is an instance of \texttt{AtomicDict}.
+NUMA architectures will enjoy this mechanism particularly: when prefetches are issued at remote memory addresses, the comparative cost of the amortized reads is much less than the sum of the costs of each individual read.
 
+Concerning NUMA architectures, it is generally also possible to argue that the cost of a remote access may be hidden by the possibly many local memory accesses that precede it.
+Such is not our case: the index, which is allocated as a contiguous array, will reside entirely in a single NUMA node.
+Thus, a thread accessing the index will either only issue operations to remote memory, or to local memory.
+NUMA support is thus limited: the presence of a single shared index makes it impossible to efficiently make use of memory partitioning.
+
+\paragraph{Sharding.}
+A further endeavor may be carried out so as to provide an \texttt{Atomic\-ShardedDict} class which creates its own pool of threads, bound to individual NUMA nodes, and affords access to the hash table shards to those threads only.
+The partitioning of a hash table into several shards requires that any given key must be uniquely assigned to one shard (e.g.\ by using the least-significant bits of the hash), each of which is managed by one or multiple threads associated with a single NUMA node.
+Mimicking the design of DRAM-HiT, the user thread would submit requests to a message queue which is consumed by the threads associated with the relevant shard.
+This is resembling of the design of~\cite{dramhit}, though this design need not be asynchronous in order to gain the speed-up of stronger memory associativity.
+It can be implemented by making use of the current implementation of \texttt{AtomicDict}, such that one shard of \texttt{AtomicShardedDict} is an instance of \texttt{AtomicDict}.
 
 \subsection{Linearization}\label{subsec:batch-lookup-linearization}
 
@@ -594,32 +575,30 @@ Each distinct lookup is linearizable, although the overall invocation is not.
 Therefore, it is possible for a result of this method to not be sequentially consistent.
 
 
-\subsection{Lock-freedom}\label{subsec:batch-lookup-lock-freedom}
+\section{Reduce}\label{sec:reduce}
 
+A common pattern when using CAS is to repeatedly make the call to the CAS routine in order to cope with concurrent mutations to the contended area of memory.
 
-\section{Aggregate}\label{sec:aggregate}
-
-A notorious behavior of using CAS semantics is to repeatedly make the call to the CAS routine in order to cope with concurrent mutations to the contended area of memory.
 We are especially interested into efficiently and ergonomically handle the mutation of the value of a given key, for such is an important use-case for hash tables in general.
 
-It is proposed here, without an accompanying implementation, an interface that is believed to satisfy the both the efficiency and ergonomics goals, which is also very similar to~\cite[Algorithm~1]{maier}.
+We propose here an interface that is believed to satisfy both the efficiency and the ergonomics goals, which is also very similar to~\cite[Algorithm~1]{maier}.
 Instead of providing an expected and a desired value, the programmer specifies the desired mutation, i.e.\ a function over the current value.
 Consider the following piece of Python code.
 \begin{lstlisting}[label={lst:aggregate-usage}, language=Python]
-	d = AtomicDict({...})
+	d = AtomicDict({"spam": 1})
 
 	d.aggregate(key="spam",
 	  mutation=lambda current_value:
 	    1 if current_value is NOT_FOUND else current_value + 1
 	)
 \end{lstlisting}
-Do note the \texttt{lambda} expression on line 4, which is a Python idiom to define an anonymous function, within an expression.
+The \texttt{lambda} expression on line 4 is a Python idiom to define an anonymous function.
 
 A key may be already present or not; thus, a programmer using this method should be instructed to write a function that handles both cases, and that there should be no assumptions as to the number of times this function is called before its described mutation is actually applied to the value.
-That is, it may be that the function is called multiple times, due to failed CASes (i.e.\ due to contention).
+That is, it may be that the function is called multiple times, due to contention.
 
 That function is called, possibly multiple times, by a routine that behaves like the following:
-\begin{lstlisting}[label={lst:aggregate}, language=Python]
+\begin{lstlisting}[capition={A common pattern when using CAS instructions.}, label={lst:aggregate}, language=Python]
 	expected = d.get(key, cereggii.NOT_FOUND)
 	while True:
 	  try:
@@ -631,153 +610,140 @@ That function is called, possibly multiple times, by a routine that behaves like
 \end{lstlisting}
 Such routine would likely be implemented in C code, for the sake of uniformity with the rest of the implementation of \texttt{AtomicDict}.
 
-The specific method of calling CAS in the above Listing~\ref{sec:aggregate} is very commonly known in the literature, albeit certainly more common to be written in a form where the CAS operation returns a boolean, rather than raising an exception.
-(See also the relevant discussion in~\S\ref{sec:insert-or-update}.)
+The specific method of calling CAS in the above Listing is very commonly known in the literature, albeit certainly more common to be written in a form where the CAS operation returns a boolean, rather than raising an exception.
+(See also the relevant discussion in Section~\ref{sec:insert-or-update}.)
 The fact that this is well known in the literature, though, does not directly imply that it is also well known in the literacy of Python programmers.
-For many programmers who are not accustomed to the domain of concurrency, the above Listing should probably be explained in detail, before its semantics are appreciated.
+For the many programmers who are not accustomed to the domain of concurrency, the above Listing should probably be explained in detail, before its semantics are appreciated.
 Providing a transparent and standardized way to access such common knowledge is therefore considered fruitful.
 
 Do note that the atomicity of this \texttt{aggregate} method is violated if within the provided mutation function, a lookup into \texttt{d} is performed.
 Or in other words, this is not a suitable design for a mutation that requires a sequentially consistent view of more than one key in the dictionary.
 
-\subsection{Reduce}\label{subsec:reduce}
-
-In order to provide further performance improvements, another method could be added, already otherwise known in computing as \emph{reduce}.
-Such is a foundational concept of many computing models, most notably those based around the concept of map-reduce like for instance Hadoop.
+In order to provide further performance improvements, another method was added, already known in computing as \emph{reduce}.
+Such is a foundational concept of many computing models, most notably those based around the concept of map-reduce like Hadoop.
 As such, it could easily be provided based on the above \texttt{aggregate} method, and further enhanced to minimize contentious access to the dictionary.
 Its usage would be something resembling the following lines of code:
 \begin{lstlisting}[label={lst:reduce-usage}, language=Python]
-	d = AtomicDict({...})
+	d = AtomicDict()
 
-	batch = [
-	  (key_1, value_1),
-	  ...
-	  (key_n, value_n),
-	]
+    data = [
+        ("red", 1),
+        ("green", 42),
+        ("blue", 3),
+        ("red", 5),
+    ]
 
-	d.reduce(iterator=batch,
-	  mutation=lambda key, current_value, new_value:
-	    new_value if current_value is NOT_FOUND
-	    else current_value + new_value
-	)
+    def count(key, current, new):
+        if current is cereggii.NOT_FOUND:
+            return new
+        return current + new
+
+    d.reduce(data, count)
 \end{lstlisting}
 
-The mutation function here is made more complex because it needs to be also independent of the key and value: the same function needs to be applied for every key-value pair in \texttt{iterator}.
 The parameter \texttt{key} is added so as to satisfy the possible cases in which the computation is dependent on the key itself.
-It is immediately clear for a customary Python programmer that the \texttt{lambda} expression could be exchanged for a full, non-inline function definition using \texttt{def}.
-Such is the expected usage for more complex mutations than the trivial one shown here.
-Nevertheless, it is worth pointing this out for the less Python-expert reader.
 
-Contention can be reduced by first accumulating an intermediate result into a thread-local hash table, and then applying the \texttt{aggregate} method for each item in the local hash table.
-This reduces contention because the repetition of keys in the input is not made visible to other threads, but only to the thread-local hash table.
+Contention can be greatly reduced by first accumulating an intermediate result into a thread-local hash table, and then applying the mutation function to the shared hash table.
+This reduces contention because the repetition of keys in the input is not made visible to other threads, but only to the thread-local hash table; that is, this operation requires $\Omega(|K|) \ll \Omega(n)$ atomic writes to memory.
+As keys in the data are repeated more frequently, the number of atomic writes required decreases.
+In fact, a piece of real-world data is often found to be skewed towards a small subset of its own keys.
 
-Since this thread-local hash table certainly requires allocation of memory, its size could also be bound.
-Upon reaching the bound the accumulated intermediate result is applied to the \texttt{AtomicDict}, and then the operation is repeated until the exhaustion of \texttt{iterator}.
-
+Finally, since this thread-local hash table certainly requires allocation of memory, its size could also be bound.
+Upon reaching the bound, the accumulated intermediate result is applied to the shared table, and then the operation is repeated until the exhaustion of \texttt{iterator}.
 
 \paragraph{Linearization and lock-freedom.}
-The linearization and lock-freedom of \texttt{aggregate} and \texttt{reduce} is chiefly dependent on the respective properties of the \texttt{ExpectedInsertOrUpdate} routine that is being called in order to implement them.
-Thus, refer to~\S\ref{subsec:insert-linearization} and \S\ref{subsec:insert-lock-freedom} for further discussion.
+The linearization and lock-freedom of \texttt{reduce} chiefly depends on the respective properties of the \texttt{ExpectedInsertOrUpdate} routine that is being called in order to implement it.
+Thus, refer to Sections~\ref{subsec:insert-linearization} and~\ref{subsec:insert-lock-freedom}.
 
 
 \section{Iterations}\label{sec:iterations}
 
-Iterations are designed to be particularly efficient in \texttt{AtomicDict}, mostly because of the design of the data table, which helps with cache efficiency, since the entries are close to one another.
-The hardware memory pre-fetching subsystem can also help by observing the linear memory access pattern.
-
+Iterations are designed to be particularly efficient in \texttt{AtomicDict}, mostly because of the design of the data table, which helps with cache efficiency.
+Speculative hardware memory pre-fetching can also help by observing the linear access pattern.
 (In~\cite{maier}, iterations are referred to as \emph{Forall} operations.)
+Additionally, the partitioning scheme described in the following Section enables truly multi-threaded iterations, by creating per-partition iterators.
+This is something that is not available in any other reviewed hash table implementation.
 
-In fact, the presented iteration system, accessible through the \texttt{{fast\_iter}} method, has been showed to perform twice as fast, compared to Python's \texttt{dict} iterator, even for single threaded executions (see Chapter~\S\ref{ch:measurements} for measures).
-Additionally, the partitioning scheme described in the following Section enables truly multi-threaded usage of an iterator, by creating per-partition iterators.
-This is something that is not available in \texttt{dict}'s implementation.
+The presented iteration scheme, accessible through the \texttt{{fast\_iter}} method, has been showed to perform twice as fast as CPython's \texttt{dict} iterator, even for single threaded executions.
+(See Section~\ref{subsec:comparisons-results} for measures.)
 
 Iterating is done primarily over the data table.
-A thread starts by fetching the first page, then (skipping over empty or deleted cells, including entry 0) reads the first entry of the page, yielding the item back to the caller (generally i.e.\ Python code), after storing the next location to visit.
-The Python code then loops calling this same function again, which will then yield the result of the stored location, and increment the next location to visit, before yielding again.
-This requires the creation of a small iterator \texttt{PyObject} to keep track of the next location to visit, a necessity for adhering to the Python loop protocol regardless.
-
+A thread starts by fetching the first page, then (skipping over empty or deleted cells) reads the first entry of the page, yielding the item back to the caller, after storing the next location to visit.
+The Python code then loops calling this same function again.
+This requires the creation of a small iterator \texttt{PyObject} to keep track of the next location to visit, a necessity for adhering to the CPython loop protocol regardless of our designs.
 
 \subsection{Iteration Partitioning}\label{subsec:iteration-partitioning}
 
-The so-far described iteration scheme is further enhanced with partitioning.
-When multiple threads want to iterate over the same hash table, it may very well make sense for the application that they visit disjoint subsets of the stored key-set.
+The above iteration scheme is further enhanced with partitioning.
+When multiple threads want to iterate over the same hash table, it may very well make sense that they visit disjoint subsets of the stored key-set.
 
 This is achieved by letting the thread declare the number of partitions $\pi$, and the partition number $i$ assigned to it (a thread identifier of some sort), s.t. $i \in [0, \pi)$.
-In order for the partition to actually yield disjoint subsets, $\pi$ has to be known to the other participating threads as well, and is intended to be equal to the number of threads participating in the iteration.
-Furthermore, $i$ needs to be assigned uniquely to each thread.
+For the partition to actually yield disjoint subsets, $\pi$ has to be known to all participating threads, and is intended to be equal to their number, and $i$ needs to be assigned uniquely to each thread.
+A call to \texttt{{fast\_iter(partitions=$\pi$, this\_partition=$i$)}} will then visit those pages for which their page number $p \mod \pi = i$.
 
-A call to \texttt{{fast\_iter(partitions=$\pi$, this\_partition=$i$)}} will then visit those pages for which it holds that their page number $p \mod \pi = i$.
-Therefore, the number of keys per subset is not guaranteed to be to be uniformly distributed.
-Nevertheless, if the key-set is large enough (that is, $|K| \gg \pi \times |P|$), and the number of deleted keys per-page is nearly constant on average (that is, let $\mu = E[d(p)]$ and $\sigma$ its standard deviation, $\sigma \ll \mu$), then the distribution of keys per partition is also nearly constant on average.
-
+The number of keys per subset is not guaranteed to be to be uniformly distributed.
+Nevertheless, if the key-set is large enough (that is, $|K| \gg \pi \times |P|$), and the number of deleted keys per-page is nearly constant on average, then the distribution of keys per partition is also nearly constant on average.
+(That is, let $\mu = E[d(p)]$ and $\sigma$ its standard deviation, $\sigma \ll \mu$.)
 
 \subsection{Non-linearization and lock-freedom}\label{subsec:iteration-linearization-lock-freedom}
 While the lock-freedom property this operation enjoys is trivial, its linearization is trickier.
-
 This iteration is in fact not guaranteed to be consistent with any sequentially consistent access, and is therefore not considered linearizable.
-In fact, repeated calls to ask for the next element in the iterator are required in order to fulfill the iteration completely, as per Python's iteration protocol.
-As such, it cannot be that, as informally defined in~\cite[Principle~3.5.1]{art-mp}:
-\begin{quote}
-	[the] method call [appears] to take effect instantaneously at some moment between its invocation and response.
-\end{quote}
-Trivially then, the formal definition~\cite[Definition~3.6.1]{art-mp} also does not apply.
+In fact, repeated calls to ask for the next element in the iterator are required in order to comply with CPython's iteration protocol.
+As such, it cannot be that ``[the] method call [appears] to take effect instantaneously at some moment between its invocation and response''~\cite[Principle~3.5.1]{art-mp}
 
-It is therefore advised to use this faster iterator when it is somehow known, by the logic of the program, that there will be no concurrent mutations.
+It is therefore advised to use this faster iterator when it is somehow known that there will be no concurrent mutations, by the logic of the program.
 Otherwise, the following sequentially inconsistent behaviors might be observed:
 \begin{enumerate}
-	\item the same key is emitted more than once; or
-	\item an update $u_1$ that happened strictly before another $u_2$ is not seen, while the latter is.
-	(Such is the case when two updates are executed in succession by the same thread.
-	Thus, it is definitely known that $u_1 \rightarrow u_2$.)
+    \item the same key is emitted more than once; or
+    \item an update $u_1$ that happened strictly before another $u_2$ is not seen, while the latter is.
+    (Such is the case when two updates are executed in succession by the same thread.
+    Thus, it is definitely known that $u_1 \rightarrow u_2$.)
 \end{enumerate}
 
 These may be very surprising behaviors for a programmer trying to debug an incorrect execution of an iterating thread.
 
 Those behaviors may be exhibited in the following circumstances, respectively:
 \begin{enumerate}
-	\item the iterating thread $t_l$ visits the data table entry $e$ in which some key $k$ is stored $\rightarrow$ another thread $t_d$ deletes $k$ $\rightarrow$ another thread $t_i$ re-inserts $k$ at a location $e'$ in the data table s.t.\ $e < e'$ $\rightarrow$ $t_l$ visits $e'$ in which $k$ is stored.
-	(It may also be that $t_d \equiv t_i$.)
-	\item the iterating thread $t_l$ visits the data table at location $e$ where the key $k_1$ is stored $\rightarrow$ update $u_1$ to key $k_1$ is performed by another thread $t_{u_1}$ $\rightarrow$ update $u_2$ to key $k_2$, stored at location $e'$ s.t. $e < e'$ is performed by another thread $t_{u_2}$ $\rightarrow$ $t_l$ visits the data table location $e'$, seeing the effect of update $u_2$.
-	(It may also be that $t_d \equiv t_i$.)
+    \item the iterating thread $t_l$ visits the data table entry $e$ in which some key $k$ is stored $\rightarrow$ another thread $t_d$ deletes $k$ $\rightarrow$ another thread $t_i$ re-inserts $k$ at a location $e'$ in the data table s.t.\ $e < e'$ $\rightarrow$ $t_l$ visits $e'$ in which $k$ is stored.
+    (It may also be that $t_d \equiv t_i$.)
+    \item the iterating thread $t_l$ visits the data table at location $e$ where the key $k_1$ is stored $\rightarrow$ update $u_1$ to key $k_1$ is performed by another thread $t_{u_1}$ $\rightarrow$ update $u_2$ to key $k_2$, stored at location $e'$ s.t. $e < e'$ is performed by another thread $t_{u_2}$ $\rightarrow$ $t_l$ visits the data table location $e'$, seeing the effect of update $u_2$.
+    (It may also be that $t_d \equiv t_i$.)
 \end{enumerate}
 
 
 \section{Proposal for a consistent iteration}\label{sec:consistent-iteration}
 
-The following proposal for a consistent iteration has not been implemented yet, but it should be fully described here.
-Nevertheless, once implemented, it will be the standard iteration scheme adopted, given that its semantics are much more immediate to understand.
-
-When a thread iterates over the hash table with the iterator described above in~\S\ref{sec:iterations}, it may encounter sequentially inconsistent behaviors, if other threads are concurrently mutating the table.
-The necessity for a sequentially consistent iterator lies therein.
-
-To implement a cost-efficient and consistent iteration seems to be possible, based on the following design.
+The following proposal for a consistent iteration has not been implemented as of the time of writing, but it is fully described here.
+Once implemented, it will be the default iteration scheme adopted, given that its semantics are much more immediate to understand.
+To implement a cost-efficient and consistent iteration seems to be possible, based on the following design:
 
 \begin{enumerate}
-	\item The iterating thread $t$ begins a Synchronous Operation (\S\ref{sec:synchronous-operations});
-	\item it generates an iteration ID $i$ (given that there will be need to store some data per iterator, it may be the pointer to this C structure);
-	\item it allocates a new local pages array of the same size of the used portion of the data table's pages array;
-	\item it allocates a new local index and copies the shared index into it;
-	\item it traverses the \texttt{AtomicDict}'s pages array, and for each page:
-	\begin{enumerate}
-		\item it sets the \texttt{iteration} field on the page to $i$;
-		\item it copies the page pointer into the local pages array;
-		\item it increments the page reference count;
-	\end{enumerate}
-	\item $t$ ends the Synchronous Operation; and
-	\item proceeds iterating over the new pages, in a manner similar to the iteration described in~\S\ref{sec:iterations}.
-	\item When the iteration completes, it decrements the reference count of the pages in the local pages array, and frees the array.
+    \item the iterating thread $t$ begins a Synchronous Operation (\S\ref{sec:synchronous-operations});
+    \item it generates an iteration ID $i$ (the pointer to the C structure holding the iteration data);
+    \item it allocates a new iteration index and copies the shared index into it;
+    \item it allocates a new iteration pages array;
+    \item it traverses the \texttt{AtomicDict}'s pages array, and for each page:
+    \begin{enumerate}
+        \item it sets the \texttt{iteration} field on the page to $i$;
+        \item it copies the page pointer into the local pages array;
+        \item it increments the page reference count;
+    \end{enumerate}
+    \item $t$ ends the Synchronous Operation; and
+    \item proceeds iterating over the new pages, in a manner similar to the iteration described in Section~\ref{sec:iterations}.
+    \item When the iteration completes, it decrements the reference count of the pages in the local pages array, and frees the array.
 \end{enumerate}
 
-When the iteration field of a page is set (i.e.\ $\neq$ \texttt{NULL}), the page is considered to be immutable.
+When the iteration field of a page is set, the page is considered to be immutable.
 A thread that wishes to mutate it, should thus first copy the page's contents into a newly allocated page, and then atomically swap the two pages in the pages array.
-If the swap fails, then it means that another thread has swapped the page into a mutable page: it cannot be that the newly swapped-in page is immutable because that requires holding all of the accessors' locks.
+If the swap fails, then it means that another thread has swapped the page into a mutable page.
+It cannot be that the newly swapped-in page is immutable because that requires holding all of the accessors' locks.
 
 The creation of new mutable pages is therefore entirely offloaded, from the iterating thread, to the other \texttt{AtomicDict}'s accessors.
 This is a feature, rather than a compromise, of this design.
 Consider the opposite case in which the iterating thread additionally has to allocate more pages and swap them in the pages array, or equivalently has to create its own immutable pages.
-In this scenario the Synchronous Operation itself would take much longer.
-Thus, hindering the performance of the other accessors which are trying to apply mutations to the hash table (recall that lookups are permitted in spite of Synchronous Operations).
-That is, there is a missed opportunity cost associated with it.
+In this scenario the Synchronous Operation itself would take much longer to complete.
+Thus, it would hinder the performance of the other accessors which are trying to apply mutations to the hash table (recall that lookups are permitted in spite of Synchronous Operations).
+That is, there is a missed opportunity cost associated with such design.
 
 Instead, the parallelization of threads which independently swap the immutable pages out for their mutable copies, entails that multiple threads can be used to create the new pages.
 And, furthermore, that if no mutations were actually going to happen, either at all or in a subset of the pages, then strictly less work is required overall.
@@ -785,7 +751,6 @@ And, furthermore, that if no mutations were actually going to happen, either at 
 It may also be entirely possible to permit the re-usage of the iteration ID\@.
 So that if a thread sees that all pages refer to the same iteration ID, then it avoids marking the pages as immutable, and instead copies the associated data into its own iterator.
 
-
 \paragraph{Linearization and non-lock-freedom.}
 With this being a Synchronous Operation, it is trivially not lock-free.
-Its linearization also follows the semantics of the Synchronous Operation: the iterator linearizes when it manages to acquire all the required locks.
+Its linearization also follows the semantics of Synchronous Operations: the iterator linearizes when it manages to acquire all the required locks.
