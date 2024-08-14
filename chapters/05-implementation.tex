@@ -12,7 +12,7 @@ The bindings to the CPython runtime are not discussed here.
 \section{Lookup}\label{sec:lookup}
 
 The proposed lookup implementation follows from the design of the hash table described previously.
-The operation begins by computing the $d_0$ (distance-0) index slot by calling the \texttt{Distance0Of} function, which internally re-hashes the CPython-generated hash, as described in Section~\ref{subsec:maier}, then it linearly probes the index for the searched key, and visits the data table accordingly, possibly pruning the search if the hash table is in a compact state.
+The operation begins by computing the $d_0$ (distance-0) index slot by calling the \texttt{Distance0Of} function, which internally re-hashes the CPython-generated hash, as described in the introduction to Chapter~\ref{ch:design}, then it linearly probes the index for the searched key, and visits the data table accordingly, possibly pruning the search if the hash table is in a compact state.
 A fairly complete C-like pseudocode of its implementation is reported in Listing~\ref{lst:lookup}.
 The hash computation is omitted for brevity from Listing~\ref{lst:lookup}.
 
@@ -380,6 +380,17 @@ Not having QSBR for metadata objects would make the implementation of \texttt{At
 
 \subsection{Migration Leader}\label{subsec:migration-leader}
 
+The leader election process is very simple.
+We entirely rely on the processor's cache coherency protocol to solve the consensus problem.
+
+An atomic CAS instruction is executed by possibly several threads.
+They try to write their own identifier into the same field in the current generation metadata.
+Exactly one thread will succeed in its attempt: it becomes the migration leader.
+
+We use CPython's \texttt{\_Py\_ThreadId} routine to generate the identifier, which is guaranteed to associate a unique number with each thread.
+Therefore, it is not possible to incur in the ABA problem.
+(See paragraph ``Thread Identifiers,'' in Section~\ref{sec:concurrent-biased-reference-counting} for more details.)
+
 \subsection{Migration Phases}\label{subsec:migration-phases}
 
 Migrations are carried out in three phases: the preparation of the new generation metadata, carried out by the leader alone, the node migration phase, which is where the bulk of the migration work is performed by both leader and follower threads, and the metadata swapping phase, performed by the leader.
@@ -556,54 +567,19 @@ Therefore, it is possible for a result of this method to not be sequentially con
 
 \section{Reduce}\label{sec:reduce}
 
-A common pattern when using CAS is to repeatedly make the call to the CAS routine in order to cope with concurrent mutations to the contended area of memory.
+A common pattern when using CAS operations is to repeatedly make the call to CAS in order to cope with contention.
+Additionally, it is common to apply a single mutation to many keys in a hash table, or eq.\ to insert many keys.
+We are especially interested into efficiently and ergonomically handle the mutation of the values of a given set of keys, for such is an important use-case for hash tables in general.
+We propose here a method already known in computing as \emph{reduce}.
+Such is a foundational concept of many computational models, most notably of those based around the concept of map-reduce, like Hadoop.
+We consider that this method eases the correct mutation of a concurrent hash table: it correctly handles contention internally.
+Finally, this method also provides significant performance improvements.
+(See Section~\ref{subsec:comparisons-results} for a commentary on the exhibited performance.)
 
-We are especially interested into efficiently and ergonomically handle the mutation of the value of a given key, for such is an important use-case for hash tables in general.
-
-We propose here an interface that is believed to satisfy both the efficiency and the ergonomics goals, which is also very similar to~\cite[Algorithm~1]{maier}.
-Instead of providing an expected and a desired value, the programmer specifies the desired mutation, i.e.\ a function over the current value.
-Consider the following piece of Python code.
-\begin{lstlisting}[label={lst:aggregate-usage}, language=Python]
-	d = AtomicDict({"spam": 1})
-
-	d.aggregate(key="spam",
-	  mutation=lambda current_value:
-	    1 if current_value is NOT_FOUND else current_value + 1
-	)
-\end{lstlisting}
-The \texttt{lambda} expression on line 4 is a Python idiom to define an anonymous function.
-
-A key may be already present or not; thus, a programmer using this method should be instructed to write a function that handles both cases, and that there should be no assumptions as to the number of times this function is called before its described mutation is actually applied to the value.
-That is, it may be that the function is called multiple times, due to contention.
-
-That function is called, possibly multiple times, by a routine that behaves like the following:
-\begin{lstlisting}[capition={A common pattern when using CAS instructions.}, label={lst:aggregate}, language=Python]
-	expected = d.get(key, cereggii.NOT_FOUND)
-	while True:
-	  try:
-	    d.compare_and_set(key, expected, mutation(expected))
-	  except cereggii.ExpectationFailed:
-	    expected = d.get(key, cereggii.NOT_FOUND)
-	  else:
-	    break
-\end{lstlisting}
-Such routine would likely be implemented in C code, for the sake of uniformity with the rest of the implementation of \texttt{AtomicDict}.
-
-The specific method of calling CAS in the above Listing is very commonly known in the literature, albeit certainly more common to be written in a form where the CAS operation returns a boolean, rather than raising an exception.
-(See also the relevant discussion in Section~\ref{sec:insert-or-update}.)
-The fact that this is well known in the literature, though, does not directly imply that it is also well known in the literacy of Python programmers.
-For the many programmers who are not accustomed to the domain of concurrency, the above Listing should probably be explained in detail, before its semantics are appreciated.
-Providing a transparent and standardized way to access such common knowledge is therefore considered fruitful.
-
-Do note that the atomicity of this \texttt{aggregate} method is violated if within the provided mutation function, a lookup into \texttt{d} is performed.
-Or in other words, this is not a suitable design for a mutation that requires a sequentially consistent view of more than one key in the dictionary.
-
-In order to provide further performance improvements, another method was added, already known in computing as \emph{reduce}.
-Such is a foundational concept of many computing models, most notably those based around the concept of map-reduce like Hadoop.
-As such, it could easily be provided based on the above \texttt{aggregate} method, and further enhanced to minimize contentious access to the dictionary.
-Its usage would be something resembling the following lines of code:
+The interface, which is believed to satisfy both the efficiency and the ergonomics goals, is very similar to~\cite[Algorithm~1]{maier}.
+Instead of providing an expected and a desired value, the programmer specifies the desired mutation, i.e.\ a function over the current values, like so:
 \begin{lstlisting}[label={lst:reduce-usage}, language=Python]
-	d = AtomicDict()
+    d = AtomicDict()
 
     data = [
         ("red", 1),
@@ -613,25 +589,49 @@ Its usage would be something resembling the following lines of code:
     ]
 
     def count(key, current, new):
-        if current is cereggii.NOT_FOUND:
+        if current is NOT_FOUND:
             return new
         return current + new
 
     d.reduce(data, count)
 \end{lstlisting}
+A key may be already present or not; thus, the function must handles both cases.
+Furthermore, there should be no assumptions as to the number of times \texttt{mutation} is called before it is actually applied.
+In fact, it may be called multiple times due to contention.
 
-The parameter \texttt{key} is added so as to satisfy the possible cases in which the computation is dependent on the key itself.
+For each key, the \texttt{reduce} method behaves like the following:
+\begin{lstlisting}[capition={A common pattern when using CAS instructions.}, label={lst:aggregate}, language=Python]
+    expected = d.get(key, NOT_FOUND)
+    while True:
+      try:
+        d.compare_and_set(key, expected, mutation(expected))
+      except ExpectationFailed:
+        expected = d.get(key, NOT_FOUND)
+      else:
+        break
+\end{lstlisting}
 
-Contention can be greatly reduced by first accumulating an intermediate result into a thread-local hash table, and then applying the mutation function to the shared hash table.
-This reduces contention because the repetition of keys in the input is not made visible to other threads, but only to the thread-local hash table; that is, this operation requires $\Omega(|K|) \ll \Omega(n)$ atomic writes to memory.
-As keys in the data are repeated more frequently, the number of atomic writes required decreases.
-In fact, a piece of real-world data is often found to be skewed towards a small subset of its own keys.
+The specific method of calling CAS in the above Listing is very commonly known in the literature.
+(Albeit certainly more common to be written in a form where the CAS operation returns a boolean, rather than raising an exception.
+See also the relevant discussion in Section~\ref{sec:insert-or-update}.)
+The fact that this is well known in the literature of concurrent data structures, though, does not directly imply that it is also well known in the literacy of Python programmers.
+For the many programmers who are not accustomed to the domain of concurrency, the above Listing should probably be explained in detail, before its semantics are appreciated.
+Providing a transparent and standardized way to access such common knowledge is therefore considered fruitful.
 
-Finally, since this thread-local hash table certainly requires allocation of memory, its size could also be bound.
-Upon reaching the bound, the accumulated intermediate result is applied to the shared table, and then the operation is repeated until the exhaustion of \texttt{iterator}.
+Do note that the atomicity of this \texttt{reduce} method is violated if within the provided mutation function, a lookup into \texttt{d} is performed.
+In other words, this is not a suitable design for a mutation that requires a sequentially consistent view of more than one key in the hash table.
+
+The parameter \texttt{key} of \texttt{mutation} is provided so as to satisfy the possible cases in which the computation is dependent on the key itself.
+
+Contention is greatly reduced by first accumulating an intermediate result into a thread-local table, and then applying the mutation function to the shared table.
+The repetition of keys in the input does not generate contention: this operation requires $\Omega(|K|)$, instead of $\Omega(n)$ atomic writes to memory, where $n$ is the number of items in the data and $|K|$ the number of distinct keys.
+As keys in the data are repeated more frequently, the number of atomic writes required decreases in proportion.
+In fact, a piece of real-world data is often found to be skewed towards a small subset of its own keys; that is, $\Omega(|K|) \ll \Omega(n)$.
+
+Finally, the memory accesses cost is amortized as in the \texttt{{batch\_lookup}} method, when atomically writing the local result into the shared hash table.
 
 \paragraph{Linearization and lock-freedom.}
-The linearization and lock-freedom of \texttt{reduce} chiefly depends on the respective properties of the \texttt{ExpectedInsertOrUpdate} routine that is being called in order to implement it.
+The linearization and lock-freedom of \texttt{reduce} chiefly depends on the respective properties of the \texttt{ExpectedInsertOr\-Update} routine that is being called in order to implement it.
 Thus, refer to Sections~\ref{subsec:insert-linearization} and~\ref{subsec:insert-lock-freedom}.
 
 

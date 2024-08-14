@@ -1,11 +1,16 @@
 \chapter{Design}\label{ch:design}
 
 
+\epigraph{
+    There are two ways of constructing a software design: One way is to make it so simple that there are \emph{obviously} no deficiencies, and the other way is to make it so complicated that there are no \emph{obvious} deficiencies.
+}{C.\ A.\ R.\ Hoare,\\The Emperor's Old Clothes.}
+
+
 In this Chapter, we describe the design that we chose for \texttt{AtomicDict}, a hash table for the CPython interpreter.
 It is a concurrent, linear-probing, resizable hash table, with double-hashing, and split index and data tables.
 Linear probing is found to be effective on modern hardware due to its excellent cache behavior.
 The resizing scheme is drawn from Maier's hash table, and the split index and data tables from CPython's design.
-We additionally enhance this scheme with other useful features for a concurrent context: synchronous operations, reservation buffers for the data table, and iteration partitioning.
+We additionally enhance this scheme with other useful features for a concurrent context: synchronous operations, reservation buffers, and iteration partitioning.
 Finally, we include methods for batching operations so as to amortize the cost of memory accesses.
 
 We were required to choose a double-hashing scheme because of the differences in hash computations in CPython and in Maier's hash table.
@@ -26,13 +31,14 @@ To drive our design choices, we hold the following claims, which we confirm late
     \item most lookups fail.
 \end{enumerate}
 
-The first claim should not be surprising (see for instance~\cite[\S13.1]{art-mp}).
+The first claim should not be surprising.
+(See for instance~\cite[\S13.1]{art-mp}.)
 The second one may be explained by the commonality of iterations; that is, of operations that return the entire key-value set.
-Instead of looking up all the individual keys which are \emph{known} to be there, it may be that Python programs prefer to iterate over all keys.
-And furthermore, it may be that when a program looks up one specific key in the dictionary, in most cases it really isn't known whether the key is there or not.
+Instead of looking up all the individual keys which \emph{are known} to be in the table, it may be that Python programs prefer to iterate over all keys.
+And furthermore, it may be that when a program looks up one specific key, in most cases it really \emph{isn't known} whether the key is present or not.
 
 Based on this claim, we enhance the table hashing with the Robin Hood scheme~\cite{robin-hood,bolt}, which is especially effective in pruning searches for keys which are not in the table.
-Our approach, detailed in the following Section~\ref{sec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the hash table to this scheme: we maintain the Robin Hood invariants as long as we can do so in a lock-free manner.
+Our approach, detailed later in Section~\ref{sec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the hash table to this scheme: we maintain the Robin Hood invariants as long as we can do so in a lock-free manner.
 When the maintenance of those invariants requires an increasing number of atomic operations to be carried out in the index, we instead fall back to regular linear probing.
 Before actually inserting a key that does not maintain the Robin Hood invariants, we mark the hash table as not \emph{compact}.
 Upon initialization, and after certain migrations, the hash table is marked as compact.
