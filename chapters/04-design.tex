@@ -17,14 +17,6 @@ We were required to choose a double-hashing scheme because of the differences in
 That is, if we did not re-hash CPython-generated hashes almost all keys would collide in the first slot, given that it is often false that the hash is a ``large pseudo-random number,'' as Maier's migration scheme requires.
 (Recall Section~\ref{subsec:python-generated-hash-values}.)
 
-Synchronous operations extend the obstructing nature of Maier's migration design for other operations: consistent size-retrival, and sequentially consistent iterations.
-Adding other sequentially consistent operations in the future remains possible, based on this framework.
-We therefore maintain like~\cite{maier}, but we extend to synchronous operations as well, that:
-\begin{quote}
-[\ldots]
-    The hash table works lock-free as long as no [synchronous operation] is triggered.
-\end{quote}
-
 To drive our design choices, we hold the following claims, which we confirm later in Section~\ref{sec:dict-metrics}:
 \begin{enumerate}
     \item the common usage of a hash table consists of 90\% lookups, 9\% insertions, and 1\% deletes; and
@@ -40,9 +32,16 @@ And furthermore, it may be that when a program looks up one specific key, in mos
 Based on this claim, we enhance the table hashing with the Robin Hood scheme~\cite{robin-hood,bolt}, which is especially effective in pruning searches for keys which are not in the table.
 Our approach, detailed later in Section~\ref{sec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the hash table to this scheme: we maintain the Robin Hood invariants as long as we can do so in a lock-free manner.
 When the maintenance of those invariants requires an increasing number of atomic operations to be carried out in the index, we instead fall back to regular linear probing.
-Before actually inserting a key that does not maintain the Robin Hood invariants, we mark the hash table as not \emph{compact}.
-Upon initialization, and after certain migrations, the hash table is marked as compact.
-A compact operation can be requested by the user to recover the Robin Hood invariants.
+
+Synchronous operations extend the obstructing nature of Maier's migration design for other operations: consistent size-retrival, and sequentially consistent iterations.
+Adding other sequentially consistent operations in the future remains possible, based on this framework.
+We therefore maintain like~\cite{maier}, but we extend to synchronous operations as well, that:
+\begin{quote}
+[\ldots]
+    The hash table works lock-free as long as no [synchronous operation] is triggered.
+\end{quote}
+
+Finally, we comment on the choice of using CPython's GC to track the internal structures of \texttt{AtomicDict} and the impact of this choice regarding lock-freedom.
 
 
 \section{Split Index and Data Tables}\label{sec:python-dict}
@@ -101,6 +100,33 @@ Then, it linearly reads the nodes in a probe, which are likely to be in the same
 Each time a tag indicates that the node may refer to an entry containing the searched key, the entry must be read, at a different, random address in memory.
 The tag serves to amortize the cost of the second, random memory read.
 
+\subsection{Reservation Buffers}\label{subsec:reservation-buffers}
+
+The usage of pages for the data table, implicitly creates zones of contention.
+When threads want to add a new key into the hash table, the most-recently added page is the one in which the insertion is attempted.
+Effectively all inserting threads may be trying to contend some entry in one page.
+First, we pick a strategy in which contention is naturally reduced, then we additionally make threads reserve more than one entry at a time: the necessity for atomic writes on the data table is greatly diminished.
+
+The degree to which contention is exhibited depends on the strategy with which threads decide which free entry in the page they wish to take for the new item.
+Consider a strategy in which the lowest-numbered entry is always chosen: every thread always tries to reserve the same entry, with only one thread succeeding at any given time.
+A simple, yet much better, alternative strategy is to treat the page itself as a hash table.
+That is, instead of choosing an entry based on the current availability, an entry is chosen based on the hash of the key.
+Thus, with sufficiently uniformly distributed hash values, the contention is greatly reduced.
+
+The inserting thread will look for the first available entry starting from the hash of the key being inserted.
+If it isn't available, it linearly looks for the next one.
+If no entry is available, a new page is allocated, possibly triggering a grow migration.
+When a reservation is successful, the thread does not reserve a single entry, and instead reserves a configurable number of consecutive entries.
+By default it reserves 4 entries.
+The reserved entries are put into a reservation buffer, which is stored inside the thread's accessor storage, described later in Section~\ref{sec:accessor-storage}.
+
+The reservation itself needs to be carried out with an atomic write, so that the cost of inserting one key is always at least two atomic operations: one write to the data table, and one to the index.
+The atomic write to the data table, though, is amortized depending on the size of the reservation buffer.
+In summary, the expected number of atomic writes per inserted key is $1 + 1/4 = 1.25$.
+
+During a shrink migration, the data table is shrunk in addition to the index.
+That also entails that the entries in the reservation buffers need to be changed, because their location relative to the start of the data table has changed.
+
 
 \section{Migrations}\label{sec:migrations-design}
 
@@ -123,27 +149,6 @@ We find that there is one clear choice again: the semi-synchronized strategy see
 Thus, in the following Section~\ref{subsec:quick-migrations}, we only describe what Maier refers to as the \emph{usGrow} implementation variant for migrations.
 
 
-\section{Reservation Buffers}\label{sec:reservation-buffers}
-
-The usage of pages for the data table, implicitly creates zones of contention.
-When threads want to add a new key into the hash table, the most-recently added page is the one in which the insertion is attempted.
-So that effectively all threads are trying to contend one page of the data table.
-
-The degree to which contention is exhibited depends on the strategy with which threads decide which free entry in the page they wish to take for the new item.
-Consider a strategy in which the lowest-numbered entry is always chosen: every thread always tries to reserve the same entry, with only one thread succeeding at any given time.
-
-A simple, yet much better, alternative is to treat the page itself as a sort of hash table.
-That is, instead of choosing an entry based on the current availability, an entry is chosen based on the hash of the key.
-Thus, with sufficiently uniformly distributed hash values, the contention is greatly reduced.
-
-The reservation itself needs to be carried out with atomic operations, so that the cost of inserting one key is always at least two atomic operations: one write to the data table, and one write to the index.
-In order to amortize the cost of having a data table separate from the actual hash table (the index), instead of reserving one entry at every insertion, we let threads reserve a configurable number of entries, four per default.
-The allowed values are 1, 2, 4, 8, 16, 32, or 64, with 64 being the size of an entire data table page.
-When a thread has no available reservations, it resolves to finding a free entry based on the key's hash as described before, reserving four entries; instead when a thread has reservations at disposal, it directly writes into the free entries that it owns, using regular (non-atomic) writes.
-
-In summary, the expected number of atomic writes per inserted key is $1 + 1/4 = 1.25$.
-
-
 \section{Accessor Storage}\label{sec:accessor-storage}
 
 The reservation buffer, along with other things, is stored inside an accessor-local storage.
@@ -156,16 +161,14 @@ It contains:
 \end{enumerate}
 
 The mutex itself protects the contents of the accessor storage.
-This may seem counter-intuitive, but it is actually very useful.
-First of all, when a dictionary needs to be freed, all the allocated accessor storages need to be freed as well.
+This may seem counter-intuitive given that the storage is local to each thread, but it is actually very useful.
+In fact, when a thread manages to acquire all of the accessors' locks, a quiescent state is reached: no other thread may be found mutating the hash table.
+The mutex itself is thus \emph{generally} held only by its accessor, which releases it at the end of any insert, or delete operation.
+
+When an instance of \texttt{AtomicDict} needs to be freed, all the allocated accessor storages need to be freed as well.
 In order to do this, the accessor storages are kept in a list.
-A thread freeing the dictionary traverses the list to free the accessor storages, and a thread accessing the dictionary for the first time, appends its newly created accessor storage to the list.
-
-The mutex itself is thus generally held only by its accessor, which releases it at the end of any insert, or delete operation.
-
-Furthermore, when a thread becomes the leader of a migration (detailed later), it may necessitate to modify the reservation buffers of the other threads, in case the data table is modified.
-E.g.\ during a shrink migration, the data table is shrunk, in addition to the index, in order to free unoccupied space.
-That also entails that the entries in the reservation buffers need to be changed, because their location relative to the start of the data table has changed.
+A thread freeing an \texttt{AtomicDict} traverses the list to free the accessor storages.
+Similarly, a thread accessing an \texttt{AtomicDict} instance for the first time, appends its newly created accessor storage to the list.
 
 
 \section{Synchronous Operations}\label{sec:synchronous-operations}
@@ -193,6 +196,10 @@ This exemption of lookups from the participation in migrations follows along the
 The Robin Hood state for the hash table is essentially the distance each key has from its distance-0 position.
 In other words, the number of collisions.
 
+Before actually inserting a key that does not maintain the Robin Hood invariants, we mark the hash table as not \emph{compact}.
+Upon initialization, and after certain migrations, the hash table is marked as compact.
+A compact operation can be requested by the user to recover the Robin Hood invariants.
+
 In order to keep track of this distance, we steal some bits from the nodes in the index.
 According to~\cite[Corollary to Theorem~3]{robin-hood}, the expected number of collisions per probe for a full table is $\Theta(\log n)$, e.g.\ four for a table of size 64.
 Such is a relatively low number, thus we can steal two bits, or in general $\log \log n$ bits, from the index nodes.
@@ -219,7 +226,7 @@ The data table maintains the invariant that the key and value fields of that ent
 This is achieved by requiring at initialization time that the thread creating the \texttt{AtomicDict} instance reserves entry number 0 for itself, and marks it as already occupied, without writing anything into it.
 Thus, all data tables have at least one unused entry.
 Furthermore, if the thread that created the hash table never writes into it, there will always be $|R|$ unused entries, with $|R|$ being the size of the reservation buffer.
-For more details on reservations see \S\ref{sec:reservation-buffers}.
+For more details on reservations see \S\ref{subsec:reservation-buffers}.
 Operations that read the index, simply always skip non-compact nodes that point to entry 0.
 Further details on tombstone nodes and deletes are given in \S\ref{sec:delete}.
 
