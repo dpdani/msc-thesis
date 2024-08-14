@@ -187,6 +187,7 @@ When an operation that was previously thread-safe because of the GIL is requeste
 Some operations require that two objects are locked, e.g.\ \texttt{{list(set)}}.
 This is done by locking first the object whose memory address is lower, and then the other, to avoid deadlocks.
 
+\paragraph{Optimistically avoiding locking.}
 To improve performance, a few operations have been selected to be executed without any locking.
 They are frequently-used, read-only operations on \texttt{list} and \texttt{dict} objects (e.g.\ \texttt{{my\_list[0]}}).
 Such operations may fall back to a slower path which acquires the involved objects' mutexes, in case the container objects were concurrently modified during the read operation.

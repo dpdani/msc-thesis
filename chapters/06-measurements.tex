@@ -54,27 +54,40 @@ Apart from this limitation, we also believe that the usage from Python code will
 
 \subsection{Results}\label{subsec:comparisons-results}
 
-Throughout the experiments we have observed a comparatively poor performance of \texttt{AtomicDict}, as measured in the number of operations completed per second.
-The performance of Maier's hash table, named Growt, is usually at least twice as high as \texttt{dict} and \texttt{AtomicDict}.
+Throughout the experiments we have observed a comparatively poor performance of \texttt{AtomicDict}, as measured in the number of operations completed per second; for instance, consider the experiments in Figure~\ref{fig:bad}.
+The performance of Maier's hash table, named Growt, is usually at least twice as high as \texttt{dict} and \texttt{AtomicDict}, often one or two orders of magnitude higher.
 We consider this to be caused by keys and values being of a fixed integer type.
 CPython's \texttt{dict}'s performance almost never scales with the number of threads, but is generally high.
-Compared with \texttt{dict} it is worth noting that while the performance may be worse, \texttt{AtomicDict} does guarantee the correctness of the output even in the face of concurrent mutations, while \texttt{dict}, crucially, does not.
-
-\paragraph{Aggregation, a very common use-case.} As expected, the throughput of the sequential hash table \texttt{dict} almost never scales with the number of threads across the experiments.
-Nevertheless, we find that it exhibits some other less trivial patterns for performance gain, as shown in the aggregation experiment in Figure~\ref{fig:aggregation}.
-For \texttt{dict}, the increasing skew of input data does not deteriorate performance, as is generally the case for concurrent hash tables, and instead improves it, due to the relevant data being more frequently found in the cache and the lack of contention caused by atomic operations.
-For \texttt{AtomicDict}, we can see that its throughput is roughly on par with \texttt{dict} when the skew is small, while contention, as expected, degrades performance.
-It is also possible to observe that the increase in skew from 0.25 to 0.95, increases the throughput for the Growt hash table as well, but does not increase it for \texttt{AtomicDict}.
-This is due to the increased contention on the reference counts of the keys in the table, whereas Growt does not need to deal with memory reclamation for its keys at all.
-
-\paragraph{Reduce.}
-We can expect these results to improve once the \texttt{reduce} method is implemented, as described in Section~\ref{sec:reduce}: the number of atomic operations required to complete this experiment would be drastically diminished.
+Compared to \texttt{dict} it is worth noting that while the performance may be worse, \texttt{AtomicDict} does guarantee the correctness of the output even in the face of concurrent mutations, while \texttt{dict}, crucially, does not.
+We find, though, that the specialized use-cases of \texttt{AtomicDict}, the \texttt{reduce}, \texttt{{batch\_lookup}}, and \texttt{fast\_iter} methods, show a very high throughput.
 
 \begin{figure}
     \begin{centering}
-        \scalebox{0.4}{\input{figures/aggregation.pgf}}%
-        \scalebox{0.4}{\input{figures/aggregation_growing.pgf}}
-        \caption{The aggregation experiment. On the left, the hash tables were initialized with the expected final size. On the right, the hash tables had an initial size of~$\approx$0. The concurrent hash tables were used by 8 threads, while \texttt{dict} was used by 1 thread.}
+        \scalebox{0.4}{\input{figures/insert_growing.pgf}}%
+        \scalebox{0.4}{\input{figures/lookup_fail.pgf}}
+        \caption{On the left, the insertion experiment, where each hash table had an initial size of 0. On the right, the failed lookup experiment, where searched keys were likely not in the table.}
+        \label{fig:bad}
+    \end{centering}
+\end{figure}
+
+\paragraph{Aggregation, a very common use-case.} As expected, the throughput of the sequential hash table \texttt{dict} almost never scales with the number of threads, across the experiments.
+The lookup experiments are notable outliers of this pattern, because of the optimistic lock avoidance described in paragraph ``Optimistically avoiding locking'' of Section~\ref{sec:thread-safety-of-builtin-data-structures}.
+
+Nevertheless, we find that \texttt{dict} exhibits some other less trivial patterns for performance gain, as shown in the aggregation experiment in Figure~\ref{fig:aggregation}.
+For \texttt{dict}, the increasing skew of input data does not deteriorate performance, as is generally the case for concurrent hash tables, and instead improves it, due to the relevant data being more frequently found in the cache and the lack of contention caused by atomic operations.
+For \texttt{AtomicDict}, we can see that its throughput is roughly on par with \texttt{dict} when the skew is small.
+When instead the skew is sufficiently high ($\geq 1.0$), the diminishing number of atomic operations required and the accumulation of an intermediate result into a thread-local table, evidently produce very significant performance gains.
+
+It is also possible to observe that the increase in skew from 0.25 to 0.95, increases the throughput for the Growt hash table as well.
+As the skew increases further, contention becomes a major scaling bottleneck.
+In fact, using \texttt{dict} with a single thread provides almost the same throughput, when the skew is 2.0.
+This is the reason why \texttt{reduce} was implemented for \texttt{AtomicDict} in the first place: rendering the concurrent hash table useful even with highly skewed data, a common pattern of real-world data.
+
+\begin{figure}
+    \begin{centering}
+        \scalebox{0.4}{\input{figures/aggregation_growing.pgf}}%
+        \scalebox{0.4}{\input{figures/aggregation_reduce.pgf}}
+        \caption{The aggregation experiment. On the left, the \texttt{AtomicDict.reduce} routine is not shown to better view the other two hash tables. The concurrent hash tables were used by 72 threads, while \texttt{dict} was used by 1 thread.}
         \label{fig:aggregation}
     \end{centering}
 \end{figure}
@@ -88,9 +101,10 @@ In Figure~\ref{fig:prepotenza} we can observe the effectiveness of our designs.
 
 On the left of the Figure, we can see that the iteration can scale almost linearly with the number of threads, and that it also exhibits a much higher throughput than \texttt{dict}'s iteration, even with a single thread-partition.
 
-On the right, we can observe that lookups in a batch can greatly improve their overall throughput with memory prefetching; in fact, even a batch size of 2 already shows higher throughput than \texttt{dict}'s lookups.
-We can also see that there exists a point of diminishing returns, in this case at a batch size of 64.
+On the right, we can observe that lookups in a batch can greatly improve their overall throughput with memory prefetching.
+We can also see that there exists a point of diminishing returns, in this case at a batch size of 1024.
 This is due to cache poisoning, where the system's cache is too small and prefetched elements are evicted from the cache before they are actually read.
+The point itself varies widely between different systems, since it depends on the capacity of the cache.
 
 \begin{figure}
     \begin{centering}
@@ -103,7 +117,7 @@ This is due to cache poisoning, where the system's cache is too small and prefet
 
 \paragraph{CPython 3.13.}
 We have attempted to use a release candidate of CPython 3.13.
-This required some slight modifications to our code, which may have altered the results.
+This required some modifications to our code, which may have altered the results.
 The \texttt{book} experiment was run with the updated interpreter and code, and it showed a decrease in performance.
 This was the only experiment we have been able to run, since most others rely on the \texttt{numpy} package which does not support this new CPython version, as of the time of writing.
 Given that we modified the code in a way that can impact performance, we should consider the results shown in Figure~\ref{fig:book-3.13} as inconclusive.
@@ -127,16 +141,16 @@ In fact, the objects of interest for this Thesis are actively shared between thr
 For instance, in the \texttt{lookup\_success} experiment, we can see that the time spent in our lookup routine is only approx.\ 25\% of the wall-clock time, while the rest is mostly spent in reference counting ($\approx28\%$), in the interpeter loop ($\approx13\%$), and in other miscellaneous CPython routines ($\approx26\%$).
 The reference counting for our internal data structures accounts for approx.\ 6\% of the wall-clock time.
 
-We have successfully addressed the issue of reference counting in the case of AtomicInt, a very simple concurrent integer implementation, detailed in Appendix~\ref{ch:atomic-int}.
+We have successfully addressed the issue of reference counting in the case of \texttt{AtomicInt}, a very simple concurrent integer implementation, detailed in Appendix~\ref{ch:atomic-int}.
 The strategy of using a thread-local proxy object was proved successful in almost eliminating the slow-paths taken for concurrent reference counting.
 During an exchange with Gross, he deemed this approach to be effective both for the nogil interpreter employed for the experiments, and for free-threading Python 3.13.
 %See measurement result in Appendix~\ref{ch:measurement-results} for further details.
 A similar strategy can also be applied to \texttt{AtomicDict}, in further developments.
 
-There are several other measurable bottlenecks, which we will only briefly mention.
-One of which is clearly the interpretation overhead: a Python program is simply input data for the CPython interpreter, which needs to be processed accordingly.
+There are several other measurable bottlenecks.
+The main one is clearly the overhead of interpretation: a Python program is simply input data for the CPython interpreter, and it needs to be processed accordingly.
 
-Where the performance of CPython's built-in hash table is measured, we also observe some considerable time spent in mutex waiting; approx.\ 21\% of the wall-clock time in the \texttt{insert} experiment.
+Where the performance of CPython's built-in hash table is measured, we also observe some considerable time spent waiting to acquire a mutex; approx.\ 21\% of the wall-clock time in the \texttt{insert} experiment.
 That hash table is not lock-free, thus it needs to spend some time waiting for lock acquisition, temporarily idling the affected CPU cores.
 Our hash table is not subject to this hindrance.
 
