@@ -600,7 +600,7 @@ Furthermore, there should be no assumptions as to the number of times \texttt{mu
 In fact, it may be called multiple times due to contention.
 
 For each key, the \texttt{reduce} method behaves like the following:
-\begin{lstlisting}[capition={A common pattern when using CAS instructions.}, label={lst:aggregate}, language=Python]
+\begin{lstlisting}[caption={A common pattern when using CAS instructions.}, label={lst:aggregate}, language=Python]
     expected = d.get(key, NOT_FOUND)
     while True:
       try:
