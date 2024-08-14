@@ -189,7 +189,7 @@ The reason why Maier chose the right-shift based scheme is so that the relative 
 That is, consider a key $x$ s.t. $h(x) \mathbin{\&} 2^{s + 1} = 0$, and a key $y$ s.t.\ $h(y) \mathbin{\&} 2^{s + 1} = 1$, where $\mathbin{\&}$ is a bitwise-and operation.
 If they were colliding before resizing from $s$ to $s + 1$ (i.e. $h(x) \mathbin{\&} (2^s - 1) = h(y) \mathbin{\&} (2^s - 1)$), they will not collide in the corresponding hash table of size $s + 1$.
 But this creates an unexpected problem.
-Consider the distance-0 after the migration $d_0'(x) = d_0(x)$.
+Consider the distance-0 position $d_0$ after the migration $d_0'(x) = d_0(x)$.
 The $d_0$ position of $y$ will have changed from $d_0(y) = h(y) \mathbin{\&} (2^s - 1)$ to $d_0'(y) = h(y) \mathbin{\&} (2^{s+1} - 1)$.
 In other words, $d_0'(y) = d_0(y) + 2^s$.
 The problem with this behavior is that the position in the new array cannot be safely determined by looking at the prior array, without reading the actual hashes of each key in a probe.
@@ -233,7 +233,7 @@ This leads to a more complex insertion routine.
 Consider the general situation in which a new item is being inserted.
 Paraphrasing from~\cite{robin-hood}:
 \begin{quote}
-	Suppose that element $A$ is at location $l$, at distance $d_a$ from its distance-0 slot, and $B$ is to be inserted.
+	Suppose that element $A$ is at location $l$, at distance $d_a$ from its $d_0$ slot, and $B$ is to be inserted.
 	Suppose $B$ has been denied allocation of its first $d_b - 1$ choices, and we are now considering $l$, its $d_b$th choice.
 \end{quote}
 Then, the Robin Hood invariant maintains that:
