@@ -13,7 +13,7 @@ The implementation described in this Chapter is publicly available at~\cite[src/
 
 The design of \texttt{AtomicRef} closely resembles the interface of Java's \texttt{AtomicReference}: an \texttt{AtomicRef} Python object is an object that stores a single pointer to another Python object.
 (Regarding the slight name difference, the shortened \emph{ref} is more commonly used in Python, compared to \emph{reference}, both in reference counting C-APIs, and in other parts of the language.)
-The choice of following the Java interface comes down to two considerations: programmers who are already accustomed with Java's interface need not learn a new one, and this (atomically updating a reference) being such a relatively simple problem, it would seem hard to design something completely different from the rest of the world.
+The choice of following the Java interface comes down to two considerations: programmers who are already accustomed to Java's interface need not learn a new one, and this (atomically updating a reference) being such a relatively simple problem, it would seem hard to design something completely different from the rest of the world.
 
 The ``hard'' part of this design is to correctly use free-threading Python's QSBR scheme (see \S\ref{sec:qsbr} for an introduction).
 Namely, in lines 23--25 of Listing~\ref{lst:atomic-ref} the read on line 24 is retried until the reference count increment succeeds on line 25.

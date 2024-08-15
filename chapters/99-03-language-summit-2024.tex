@@ -38,7 +38,7 @@ So, we could then turn to the pursuit of finding a set of use-cases we wish to s
 This being precisely what I would very much like to contribute towards.
 Of course, it can be the subject of much debate.
 
-One prospect could be going through whatever's currently in the standard library, looking for spots where further atomicity guarantees could be afforded.
+One prospect could be going through whatever is currently in the standard library, looking for spots where further atomicity guarantees could be afforded.
  For instance, considering collections.Counter, we can find that it doesn't guarantee no increment will ever be lost, unless a lock is manually wrapped around it.
 So one might improve the implementation of Counter, or maybe create a new AtomicCounter class for these new use-cases.
 
@@ -73,7 +73,7 @@ This seems to me a better direction to take.
 There's also the perhaps secondary problem of performance.
 Secondary in the sense that I think thread-safety is usually considered more important to the average programmer.
 
- The free-threading changes may actually decrease the performance of some multi-threaded workloads.
+ The free-threading changes may actually decrease the performance of some multithreaded workloads.
 Notably, of those that frequently modify some object that is shared among threads.
 Now, I am not up to speed with the most recent optimizations already in main or coming to it, so my understanding may be incomplete.
 But according to observations based on the original fork, these write-heavy flows will be heavily impacted by the free-threading changes.

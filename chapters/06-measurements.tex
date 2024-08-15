@@ -138,7 +138,7 @@ There are several bottlenecks to multithreaded-performance scaling in free-threa
 The major one is concurrent reference counting, in spite of the many improvements detailed in Chapter 2.
 In fact, the objects of interest for this Thesis are actively shared between threads, therefore our objects are always forced into the reference counting slow-paths.
 
-For instance, in the \texttt{lookup\_success} experiment, we can see that the time spent in our lookup routine is only approx.\ 25\% of the wall-clock time, while the rest is mostly spent in reference counting ($\approx28\%$), in the interpeter loop ($\approx13\%$), and in other miscellaneous CPython routines ($\approx26\%$).
+For instance, in the \texttt{lookup\_success} experiment, we can see that the time spent in our lookup routine is only approx.\ 25\% of the wall-clock time, while the rest is mostly spent in reference counting ($\approx28\%$), in the interpreter loop ($\approx13\%$), and in other miscellaneous CPython routines ($\approx26\%$).
 The reference counting for our internal data structures accounts for approx.\ 6\% of the wall-clock time.
 
 We have successfully addressed the issue of reference counting in the case of \texttt{AtomicInt}, a very simple concurrent integer implementation, detailed in Appendix~\ref{ch:atomic-int}.
