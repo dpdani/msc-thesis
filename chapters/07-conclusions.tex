@@ -3,9 +3,10 @@
 We have shown that it is possible to implement an efficient concurrent hash table for CPython.
 This is a very important building block for its evolving ecosystem, which is increasingly interested in parallelization.
 To the authors' knowledge, this is the first naturally parallel hash table implemented for CPython.
-In the previous Chapter we have experimentally shown the limitations of a hash table designed to be concurrent and compliant to CPython object protocol, and we have also shown that our designs to circumvent those limitations were effective.
+In the previous Chapter we have experimentally shown the limitations of a hash table designed to be concurrent and compliant to the CPython object protocol.
+We have also shown that our designs to circumvent those limitations were effective.
 
-These results were also presented at the 2024 Python Language Summit.
+These results were presented at the 2024 Python Language Summit.
 The handout of the presentation is included in Appendix~\ref{ch:language-summit}.
 An article about the presentation and the discussion that followed is available online~\cite{python-summit-2024-free-threading-ecosystems}.
 The article concludes with this note:
@@ -15,10 +16,6 @@ The article concludes with this note:
 \end{quote}
 
 What follows in this Chapter are interesting topics for further research and some closing remarks.
-
-%\section{Further Research}\label{sec:further-research}
-
-%Apart from the work already described in Chapter~\ref{ch:design-and-implementation}.
 
 
 \section{Concurrent Garbage Collection}\label{sec:concurrent-garbage-collection}
@@ -32,55 +29,58 @@ It could be beneficial for the performance of multithreaded applications that so
 In that ``concurrent'' object-space a completely different mechanism could be employed for memory reclamation.
 %For instance hazard-pointers, but several others are known in the literature.
 Objects that live in that space could be shared more effectively between threads, without hindering the performance of the application.
-The GC itself could also be designed not to be a stop-the-world GC, as is currently the case for CPython's, in order to permit fully lock-free data structure implementations.
+The GC itself could also be designed not to be a stop-the-world GC, as is currently the case for CPython's.
+This would permit fully lock-free data structure implementations.
 The two different collectors would co-exist in the same CPython process.
 
 
-\section{\texttt{AtomicDictHandle}}\label{sec:atomicdicthandle}
+\section{Thread-Local Handles}\label{sec:atomicdicthandle}
 
-A significant portion of the measured time involving \texttt{AtomicDict}'s methods pertains to concurrent reference counting.
+A significant portion of the measured time involving the experiments of Chapter~\ref{ch:measurements} pertains to concurrent reference counting.
 Such is because a lot of increments and decrements to the reference count are made when the CPython interpreter executes instructions that involve an instance of \texttt{AtomicDict}.
 E.g.\ every time a lookup is performed, the Python interpreter increments and later decrements the reference count of the involved \texttt{AtomicDict} object.
 
 Considering the necessity to use atomic operations to perform the counting (two in the above example), the amount of time spent in those routines is great ($\approx$15\%--25\% in the benchmarks of Chapter~\ref{ch:measurements}).
-Instead of accessing the \texttt{AtomicDict} instance directly, though, it is possible to create a handle for it, like the one described in Section~\ref{subsec:atomic-int-handles}.
+Instead of accessing the \texttt{AtomicDict} instance directly, though, it is possible to create a handle for it, like the one described in Section~\ref{subsec:atomic-int-handles}, an \texttt{AtomicDictHandle}.
 With the handle being a thread-local object, not intended to be shared with other threads, it can enjoy the fast-path for reference counting, thus reducing the time spent doing reference counting to a negligible amount.
-This addition would not require a concurrent GC\@.
+A thread-local handle \emph{represents} an \texttt{AtomicDict} object, and proxies calls to it.
+This addition would not require a concurrent GC, and would be beneficial regardless.
 
 Since this would entail a reduction over the total amount of work that the CPU needs to perform, it is expected that an improvement of $\approx$20\% over the measurements of Chapter~\ref{ch:measurements} would be observed.
 
 
 \section{Compatibility with Sub-Interpreters}\label{sec:compatibility-with-sub-interpreters}
 
-Sub-interpreters are a fairly new technology, dating back to 2017, described in PEPs~554~and~734~\cite{pep554,pep734}.
+A CPython process can have multiple sub-interpreters.
 Historically, since the GIL was deemed an intrinsic presence in the CPython interpreter, there have been various attempts at circumventing this limitation.
-%Offloading the parallelizable computation to sub-processes, or custom C extensions are common workarounds to the GIL, as also noted by Gross in PEP~703~\cite{pep703}.
-Simplifying a lot of the relevant history, sub-interpreters were also designed with this problem in mind, and were recently enhanced to be endowed with a per-interpreter GIL in PEP~684~\cite{pep684}.
-Thus, several threads may have their own GIL, enabling them to run in parallel notwithstanding the continued presence of multiple global interpreter locks.
-Given that the internal data structures of \texttt{AtomicDict} are Python objects, it cannot be used with sub-interpreters.
+Simplifying a lot of the relevant history, sub-interpreters were also designed with this problem in mind, each being endowed with a per-interpreter GIL\@.
+When a CPython process starts several threads and associates with each of them a sub-interpreter, they will all have their own GIL, enabling them to run in parallel notwithstanding the continued presence of multiple global interpreter locks.
+Sub-interpreters can be considered to be a fairly new technology, dating back to 2017, described in PEPs~554, 684 and 734~\cite{pep554,pep684,pep734}.
 To the author, cross-compatibility of a data structure between free-threading \emph{and} sub-interpreters constitutes an interesting research area.
 
 Sub-interpreter parallelization comes at the expense of not being able to easily share objects between interpreters, as also noted in~\cite[{\S}Per-Interpreter GIL]{pep703}.
 Inheriting some of their design from Communicating Sequential Processes (CSP), the general idea is that the threads in sub-interpreters exchange information only through message-passing, rather than by directly sharing memory.
 In fact, sharing \emph{objects} between interpreters is generally not allowed.
+Given that the internal data structures of \texttt{AtomicDict} are CPython objects, it cannot be used with sub-interpreters.
 Nonetheless, there are mechanisms to share \emph{immutable} data between sub-interpreters.
+
 In~\cite[\S Queue Objects]{pep734} is described a sub-interpreters-compatible implementation of a queue, that can be used to pass \emph{shareable} objects from one interpreter to another.
-Integers, byte arrays, floats, and a queue instance in itself, are all shareable, among others.
+Integers, strings, floats, and a queue instance in itself, are all shareable, among others.
 Conceptually, an object qualifies as shareable as long as it can be entirely represented by an immutable array of bytes.
 
-Crucially, a sub-interpreters queue is not a Python object, differently from \texttt{AtomicDict}.
-It is instead allocated and freed without interacting with CPython's GC\@.
-In order for a queue to be supported by sub-interpreters, its internal state cannot be stored into objects, because an interpreter accessing the queue would crash when trying to access an object not pertaining to its own object-space.
+Crucially, a sub-interpreters queue is not a CPython object, differently from \texttt{AtomicDict}.
+It is instead allocated and freed without interacting with the GC\@.
+Its internal state cannot be stored into objects, because an interpreter accessing the queue would crash when trying to access an object not pertaining to its own object-space.
 This also entails that there must exist an object \emph{representation} of a queue, which has to be created from the interpreter that desires to access the queue, and no other interpreter.
 
-In fact, a sub-interpreters queue can be entirely represented by its ID number.
+A sub-interpreters queue can be entirely represented by its ID number.
 When a queue's memory is allocated outside CPython's object-space, the queue is inserted into a shared, global list of queues.
 The ID of a queue is its position in the list of queues.
-For a Python thread to access a queue, it is sufficient to know its ID, to then retrieve the queue from the list.
+For a Python thread to access a queue, it is sufficient to know its ID, to then retrieve the queue from the global list.
 The object created to interact with a queue from Python code, i.e.\ the \emph{representation} of the queue, only knows the ID of the queue: it just holds an integer, and thus it can be entirely represented by an array of bytes.
 Therefore, a queue can be considered \emph{shareable}, and it can also be enqueued into another queue, or even into itself.
 
-This \emph{representational} behavior should hold some resemblance to the reader with the \texttt{AtomicDictHandle}, whose primary purpose has nothing to do with sub-interpreters, but that can nonetheless be used to hold an immutable, and thus potentially \emph{shareable}, representation of a hash table.
+This \emph{representational} behavior should hold some resemblance with the \texttt{AtomicDictHandle} described in the previous Section, whose primary purpose has nothing to do with sub-interpreters, but that can nonetheless be used to hold an immutable, and thus potentially \emph{shareable}, representation of a hash table.
 In fact, it can be entirely represented by an immutable pointer to the \texttt{AtomicDict} instance.
 In order for the handle to work properly with sub-interpreters, an additional requirement is that the \texttt{AtomicDict}'s internal data structures should not be Python objects, putting further interest into implementing a different memory management scheme.
 
@@ -88,7 +88,7 @@ Supposing such is performed, more work needs to be carried out in order to ensur
 During an exchange with Eric Snow, author of the PEPs on sub-interpreters, the necessity for standardized, customizable ways to create cross-interpreter object representations emerged as one of Snow's planned works.
 Snow intends to write a PEP proposing to create a new \texttt{\_\_xi\_\_} standard method for Python classes to return such immutable representations.
 
-With these enhancements, albeit quite a substantial amount of work to implement them, it becomes possible to make use of the same \texttt{AtomicDict} implementation in both concurrency models: common multi-threading with free-threading, and isolated object-spaces multi-threading with sub-interpreters.
+With these enhancements, albeit quite a substantial amount of work to implement them, it becomes possible to make use of the same \texttt{AtomicDict} implementation in both concurrency models: common multithreading with free-threading, and isolated object-spaces multithreading with sub-interpreters.
 
 
 \section{Closing Remarks}\label{sec:closing-remarks}
@@ -99,4 +99,4 @@ I am glad I was finally able to reach this goal.
 
 While I consider this to be quite an achievement, I don't consider this to be the final word on concurrent hash tables for the Python ecosystem.
 I would in fact not want it to be that.
-I rather hope this proves to be a starting point for concurrent data structures in this rich and evolving ecosystem.
+I rather hope this proves to be a solid starting point for concurrent data structures in this rich and evolving ecosystem.

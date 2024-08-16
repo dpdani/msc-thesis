@@ -6,16 +6,15 @@
 }{C.\ A.\ R.\ Hoare,\\The Emperor's Old Clothes.}
 
 
-In this Chapter, we describe the design that we chose for \texttt{AtomicDict}, a hash table for the CPython interpreter.
-It is a concurrent, linear-probing, resizable hash table, with double-hashing, and split index and data tables.
+In this Chapter, we describe the design that we chose for \texttt{AtomicDict}, a concurrent hash table for the CPython interpreter.
+It is a linear-probing, resizable hash table, with double-hashing, and split index and data tables.
 Linear probing is found to be effective on modern hardware due to its excellent cache behavior.
 The resizing scheme is drawn from Maier's hash table, and the split index and data tables from CPython's design.
-We additionally enhance this scheme with other useful features for a concurrent context: synchronous operations, reservation buffers, and iteration partitioning.
-Finally, we include methods for batching operations so as to amortize the cost of memory accesses.
+We enhance the hash table with other useful features for a concurrent context: synchronous operations, reservation buffers, and iteration partitioning.
+Additionally, we include methods for batching operations so as to amortize the cost of memory accesses.
 
 We were required to choose a double-hashing scheme because of the differences in hash computations in CPython and in Maier's hash table.
-That is, if we did not re-hash CPython-generated hashes almost all keys would collide in the first slot, given that it is often false that the hash is a ``large pseudo-random number,'' as Maier's migration scheme requires.
-(Recall Section~\ref{subsec:python-generated-hash-values}.)
+That is, if we did not re-hash CPython-generated hashes most keys would collide.
 
 To drive our design choices, we hold the following claims, which we confirm later in Section~\ref{sec:dict-metrics}:
 \begin{enumerate}
@@ -33,9 +32,9 @@ Based on this claim, we enhance the table hashing with the Robin Hood scheme~\ci
 Our approach, detailed later in Section~\ref{sec:lazy-robin-hood}, differs from~\cite{bolt} in that we don't necessarily constrain the hash table to this scheme: we maintain the Robin Hood invariants as long as we can do so in a lock-free manner.
 When the maintenance of those invariants requires an increasing number of atomic operations to be carried out in the index, we instead fall back to regular linear probing.
 
-Synchronous operations extend the obstructing nature of Maier's migration design for other operations: consistent size-retrival, and sequentially consistent iterations.
+Synchronous operations extend the obstructing nature of Maier's migration design for other operations: consistent size-retrival and sequentially consistent iterations.
 Adding other sequentially consistent operations in the future remains possible, based on this framework.
-We therefore maintain like~\cite{maier}, but we extend to synchronous operations as well, that:
+We therefore maintain like~\cite{maier}, but we extend to synchronous operations, that:
 \begin{quote}
 [\ldots]
     The hash table works lock-free as long as no [synchronous operation] is triggered.
@@ -48,7 +47,7 @@ Finally, we comment on the choice of using CPython's GC to track the internal st
 
 The hash table itself is an index over another table, called the data table.
 In the latter is where the pointers to the keys and values objects reside.
-The index table is sparse, so as to cope with collisions and their resolution, and the data table is dense, so as to provide better performance for iterations.
+The index table is sparse, so as to cope with collisions and their resolution, and the data table is dense, so as to provide better performance for iterations and reduce memory usage.
 Collision resolution only addresses the index.
 We call \emph{slots} the elements of the index table, and \emph{entries} the elements of the data table.
 Slots may be occupied by \emph{nodes}.
@@ -104,8 +103,8 @@ The tag serves to amortize the cost of the second, random memory read.
 
 The usage of pages for the data table, implicitly creates zones of contention.
 When threads want to add a new key into the hash table, the most-recently added page is the one in which the insertion is attempted.
-Effectively all inserting threads may be trying to contend some entry in one page.
-First, we pick a strategy in which contention is naturally reduced, then we additionally make threads reserve more than one entry at a time: the necessity for atomic writes on the data table is greatly diminished.
+Effectively, all inserting threads may be trying to contend some entry in one page.
+To reduce this contention, first we pick a strategy in which contention is naturally reduced, then we additionally make threads reserve more than one entry at a time: the necessity for atomic writes on the data table is greatly diminished.
 
 The degree to which contention is exhibited depends on the strategy with which threads decide which free entry in the page they wish to take for the new item.
 Consider a strategy in which the lowest-numbered entry is always chosen: every thread always tries to reserve the same entry, with only one thread succeeding at any given time.
@@ -120,7 +119,7 @@ When a reservation is successful, the thread does not reserve a single entry, an
 By default it reserves 4 entries.
 The reserved entries are put into a reservation buffer, which is stored inside the thread's accessor storage, described later in Section~\ref{sec:accessor-storage}.
 
-The reservation itself needs to be carried out with an atomic write, so that the cost of inserting one key is always at least two atomic operations: one write to the data table, and one to the index.
+The reservation itself needs to be carried out with an atomic write, so that the cost of inserting one key is at most two atomic operations: one write to the data table, and one to the index.
 The atomic write to the data table, though, is amortized depending on the size of the reservation buffer.
 In summary, the expected number of atomic writes per inserted key is $1 + 1/4 = 1.25$.
 
@@ -147,6 +146,7 @@ The current size of the hash table is approximated based on the number of pages 
 Picking the most-significant bits of the hash to determine the position of a node in the index is crucial, in order to implement Maier's migration.
 In fact, the usage of the most-significant bits scheme is a core assumption for proving~\cite[Lemma~5.1]{maier}.
 CPython-generated hashes are designed for a hash table that employs the least-significant bits instead.
+(Recall Section~\ref{subsec:python-generated-hash-values}.)
 Given this fundamental difference, it was necessary to re-hash Python-generated hashes, or else the $d_0$ position of many objects would be $0$.
 This is done with a cheap CRC32 hardware instruction, that Maier also used in his implementation.
 Thus, the required property of hashes being ``\emph{large} pseudo-random numbers,'' is respected.
@@ -233,6 +233,26 @@ We can observe the local effect of collisions to determine that the table size i
 One may argue that a degenerate set of hashes can continuously trigger migrations.
 While this is true in principle, do note an implication of Table~\ref{tab:nodes}: starting from a table capacity of $2^9 = 512$, the maximum distance is 16, while the number of nodes in a 16-byte-aligned region of memory (a quad word), is 8.
 Therefore, the described mechanism cannot be triggered indefinitely.
+
+
+\section{Amortizing Memory Accesses}\label{sec:amortizing-memory-accesses}
+
+It is common for hash tables to be used so that multiple keys are mutated or looked up.
+Not all hash table implementations provide methods for operating on multiple keys within a single operation.
+This is not an issue in principle, because one of the basic operations can be called multiple times.
+We find that providing methods that operate on multiple keys can significantly increase the efficiency of those operations.
+The amortization scheme described in this Section is intended to be an alternative to the one proposed in~\cite{dramhit}.
+With this proposal, there is no need to radically the interface of the hash table: some additional methods are provided instead.
+
+Essentially, the costs that we desire to amortize are the stalls that a processor naturally encounters while waiting for the memory subsystem to respond.
+In a hash table, necessarily, most reads are random, and thus unlikely to enjoy caching or hardware pre-fetching.
+When a key is looked up, inserted, updated, or deleted, the hash is computed and the corresponding slot or bucket is retrieved from memory.
+If the program knows, by its own logic, that it will necessitate to read or mutate multiple keys, then the slots of the corresponding keys can be prefetched, before the processor is stalled, waiting to read those locations.
+Even when the requested number of keys is 2 some gains can be observed from this scheme.
+In fact, it becomes very likely that the processor is stalled waiting for the first read to complete, and that the second one is completed together with the first, so that the processor isn't stalled again.
+
+\texttt{AtomicDict} provides two methods for this kind of use-cases: \texttt{{batch\_lookup}} and \texttt{reduce}, described in Sections~\ref{sec:batch-lookup} and~\ref{sec:reduce}.
+As the names suggest, the first one amortizes the cost of lookups and the second of mutations.
 
 
 \section{Garbage Collection}\label{sec:garbage-collection}

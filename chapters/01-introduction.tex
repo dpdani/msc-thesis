@@ -66,7 +66,7 @@ These two are very desirable properties of concurrent data structures: they impl
 In terms of Amdahl's Law, the implication is that the sequential part of a program ($1 - p$) is very small, so that the speedup scales almost linearly with the number of threads.
 That is, for $S$ being the speedup gained by parallelizing a program, $p$ being the parallelizable fraction of the program, and $n$ being the number of parallel processors:
 \[
-    S = \frac{1}{1 - p + \frac{p}{n}}, \text{with} (1 - p) \ll p.
+    S = \frac{1}{1 - p + \frac{p}{n}}, \text{~with~} (1 - p) \ll p.
 \]
 
 The hash table design proposed in this Thesis is almost entirely lock-free.
