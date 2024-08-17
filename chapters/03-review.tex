@@ -194,7 +194,7 @@ The $d_0$ position of $y$ will have changed from $d_0(y) = h(y) \mathbin{\&} (2^
 In other words, $d_0'(y) = d_0(y) + 2^s$.
 The problem with this behavior is that the position in the new array cannot be safely determined by looking at the prior array, without reading the actual hashes of each key in a probe.
 
-This problem is avoided by choosing the most-significant bits scheme: $d_0(y) = h(y) \gg (64 - s)$, and $d_0'(y) = h(y) \gg (64 - s - 1)$.
+This problem is avoided by choosing the most-significant bits scheme: $d_0(y) \\= h(y) \gg (64 - s)$, and $d_0'(y) = h(y) \gg (64 - s - 1)$.
 In other words, $d_0'(y) = d_0(y) \cdot 2 + 1$.
 While $d_0(x) = h(x) \gg (64 - s)$, and $d_0'(x) = h(x) \gg (64 - s - 1) \Rightarrow d_0'(x) = d_0(x) \cdot 2$.
 

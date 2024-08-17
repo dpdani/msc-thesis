@@ -389,7 +389,7 @@ Exactly one thread will succeed in its attempt: it becomes the migration leader.
 
 We use CPython's \texttt{\_Py\_ThreadId} routine to generate the identifier, which is guaranteed to associate a unique number with each thread.
 Therefore, it is not possible to incur in the ABA problem.
-(See paragraph ``Thread Identifiers,'' in Section~\ref{sec:concurrent-biased-reference-counting} for more details.)
+(See paragraph ``Thread Identifiers,'' in Section~\ref{sec:concurrent-biased-reference-counting}, and~\cite[\S10.6]{art-mp} for a discussion on the ABA problem.)
 
 \subsection{Migration Phases}\label{subsec:migration-phases}
 

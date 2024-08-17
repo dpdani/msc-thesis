@@ -1,7 +1,19 @@
 \chapter{Introduction}\label{ch:introduction}
 
+The focus of this Thesis is the development of an efficient concurrent hash table that can be used directly from Python code.
+Given the ubiquitous use of hash tables in Python programs, the research aims to contribute to the Python community by proposing a data structure that meets the performance and scalability demands of a post-GIL Python environment.
 
-\section{Hash tables, concurrent hash tables, and their applications}\label{sec:hash-tables}
+This Thesis is organized into several chapters, beginning with an introduction to hash tables, concurrent hash tables, and their applications, followed by an exploration of the challenges and solutions related to free-threading CPython.
+We then review the state of the art in concurrent hash table design, detail the design and implementation of the proposed data structure, and conclude with an evaluation of its performance.
+
+Overall, this work provides a significant contribution to the field of concurrent data structures for Python and offers practical insights for its community as it prepares for new possibilities in parallel computing with the upcoming changes to CPython.
+
+This Chapter begins by recalling hash tables and their many applications in computing, and then delves into the relevance of concurrent hash tables.
+The Chapter also touches on CPython's built-in hash table, \texttt{dict}, which is widely used within the CPython interpreter and in the outer Python ecosystem.
+The final Section introduces ``free-threading Python,'' an experimental build of CPython that removes the GIL in the upcoming 3.13 release.
+
+
+\section[Hash tables, concurrent hash tables, and their applications]{Hash tables, concurrent hash tables, and\\their applications}\label{sec:hash-tables}
 
 A hash table is a data structure that stores a set of distinct elements, called \emph{keys}, and associates with each of them a \emph{value}.
 A \emph{{hash function}} $h(k)$ is used to determine a unique position for each key $k$ in an array of \emph{buckets} (or \emph{slots}), in which the desired key-value association can be found.
@@ -14,7 +26,7 @@ Hash tables support common operations, which are executed in expected constant t
     \item an \emph{insert} creates a new (non-previously-existing) association of a key to a value;
     \item an \emph{update} replaces the value associated with a certain key with a new value;
     \item a \emph{delete} removes a key-value association; and
-    \item a \emph{lookup} returns the value associated with a certain key; in particular a lookup is said to be \emph{successful} if it in fact returns said value, or alternatively it is said to \emph{fail}.
+    \item a \emph{lookup} returns the value associated with a certain key; in particular, a lookup is said to be \emph{successful} if it in fact returns said value, or alternatively it is said to \emph{fail}.
 \end{enumerate}
 
 Implementations of hash tables are generally distinguished by their choice of hash function and of collision resolution.
@@ -35,13 +47,13 @@ They are taught in entry level Computer Science courses, and form the basis of m
 Common applications include: map-reduce systems, databases (notably, their indexing and aggregation capabilities), caching systems, and dynamic programming, among others.
 A characteristic common to these applications is that hash table access can dominate their execution time.
 
-
 \subsection{Concurrent Hash Tables}\label{subsec:concurrent-hash-tables}
 
 In a shared-memory concurrency environment, several threads can share information in a flexible and efficient way by sharing access to a common hash table.
 In fact, hash tables can provide a form of \emph{natural parallelism}, as worded in the introduction to~\cite[Chapter~13]{art-mp}:
 \begin{quote}
-    [\ldots] We studied how to extract parallelism from data structures [\ldots] that seemed to provide few opportunities for parallelism.
+[\ldots]
+    We studied how to extract parallelism from data structures [\ldots] that seemed to provide few opportunities for parallelism.
     In this chapter we take the opposite approach.
     We study \emph{{concurrent hashing}}, a problem that seems to be ``naturally parallelizable'' or, using a more technical term, \emph{{disjoint--access--parallel}}, meaning that concurrent method calls are likely to access disjoint locations, implying that there is little need for synchronization.
 \end{quote}

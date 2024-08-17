@@ -1,6 +1,6 @@
 \chapter{Free-Threading Python}\label{ch:free-threading-python}
 
-In this Chapter we delve into the modifications necessary to enable free-threading in CPython.
+In this Chapter we delve into the modifications necessary to enable free-thread\-ing in CPython.
 This is a combination of several different optimizations primarily focused on maintaining single-threaded performance, in a concurrent context.
 
 We start by examining concurrent, biased reference counting, which optimizes performance by assuming most objects are accessed primarily by the thread that created them.
@@ -189,7 +189,7 @@ This is done by locking first the object whose memory address is lower, and then
 
 \paragraph{Optimistically avoiding locking.}
 To improve performance, a few operations have been selected to be executed without any locking.
-They are frequently-used, read-only operations on \texttt{list} and \texttt{dict} objects (e.g.\ \texttt{{my\_list[0]}}).
+They are frequently used, read-only operations on \texttt{list} and \texttt{dict} objects (e.g.\ \texttt{{my\_list[0]}}).
 Such operations may fall back to a slower path which acquires the involved objects' mutexes, in case the container objects were concurrently modified during the read operation.
 (This optimistic fast-path requires the changes to mimalloc described in~\S\ref{sec:mimalloc}.
 See also~\cite[\S Optimistically Avoiding Locking]{pep703}, for further details.)

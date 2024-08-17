@@ -80,7 +80,7 @@ For a Python thread to access a queue, it is sufficient to know its ID, to then 
 The object created to interact with a queue from Python code, i.e.\ the \emph{representation} of the queue, only knows the ID of the queue: it just holds an integer, and thus it can be entirely represented by an array of bytes.
 Therefore, a queue can be considered \emph{shareable}, and it can also be enqueued into another queue, or even into itself.
 
-This \emph{representational} behavior should hold some resemblance with the \texttt{AtomicDictHandle} described in the previous Section, whose primary purpose has nothing to do with sub-interpreters, but that can nonetheless be used to hold an immutable, and thus potentially \emph{shareable}, representation of a hash table.
+This \emph{representational} behavior should hold some resemblance with the \texttt{Atom\-icDictHandle} described in the previous Section, whose primary purpose has nothing to do with sub-interpreters, but that can nonetheless be used to hold an immutable, and thus potentially \emph{shareable}, representation of a hash table.
 In fact, it can be entirely represented by an immutable pointer to the \texttt{AtomicDict} instance.
 In order for the handle to work properly with sub-interpreters, an additional requirement is that the \texttt{AtomicDict}'s internal data structures should not be Python objects, putting further interest into implementing a different memory management scheme.
 

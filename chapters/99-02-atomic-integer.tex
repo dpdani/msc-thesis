@@ -1,88 +1,85 @@
 \chapter{Atomic Integer}\label{ch:atomic-int}
 
-This chapter discusses the concept, rationale, and design of an atomic integer for Python, especially, but not exclusively, in the context of the free-threading changes.
+This chapter discusses the rationale and design of an atomic integer for CPython.
+It can be useful both in the context of the free-threading changes, and in the default build of CPython.
 The implementation discussed here is available in~\cite[src/cereggii/atomic\_int]{cereggii}.
 
 
 \section[The necessity before and after the free-threading changes]{The necessity before and after the free-\\threading changes}\label{sec:the-necessity-before-and-after-the-free-threading-changes}
 
-With the presence of the GIL, many concurrency problems that existed in Python code, and likely still exist, may never be observed.
+With the presence of the GIL, many concurrency problems that existed in Python code may never be observed.
 An atomically updatable integer is thus a very simple abstraction to ensure that certain concurrency problems are handled correctly.
 
 \begin{quote}
     [\ldots] There's currently no atomic int in Python and people go through all sorts of weird contortions to atomically count things (which often leads to broken code even with the GIL).\footnote{%
-    This quote is from a comment by Gross in a public online discussion, and is accessible at \url{https://discuss.python.org/t/towards-a-python-util-concurrent/41325/8}, last accessed \today.
+    This quote is from a comment by Gross in a public discussion, and is accessible at \url{https://discuss.python.org/t/towards-a-python-util-concurrent/41325/8}, last accessed \today.
 }
 \end{quote}
 
-Regardless of the Python build, a class of the likes of \texttt{AtomicInt} is still useful in Python's ecosystem.
-It can additionally gain usefulness in Python free-threading build because of the performance improvements that can be gained with specific design choices, as described later in Section~\ref{subsec:atomic-int-handles}.
+Regardless of the CPython build, a class of the likes of \texttt{AtomicInt} is still useful in Python's ecosystem.
+It can additionally gain usefulness in the free-threading build because of the performance improvements that can be gained with specific design choices described later in Section~\ref{subsec:atomic-int-handles}.
 
 
 \section{Design}\label{sec:atomic-int-design}
 
 The design of \texttt{AtomicInt} revolves around exposing common C atomic operations on 64-bit signed integers to Python code.
-Therefore, most of the routines listed in file~\cite[src/cereggii/atomic\_int/atomic\_int.c]{cereggii} essentially create this mapping between C operations and Python APIs.
+Therefore, most of the implemented routines essentially create this mapping between C operations and Python APIs.
 
-The APIs of \texttt{AtomicInt} closely resemble some of Java's \texttt{AtomicInteger} methods.\footnote{%
-    See \url{https://docs.oracle.com/javase/8/docs/api///java/util/concurrent/atomic/AtomicInteger.html}, last accessed \today.
-}
-The \texttt{AtomicInt} has some easily expected methods, like \texttt{{get()}} and \texttt{{set(\ldots)}}, and also some borrowed from Java, and very similar to other C-level atomic operations, such as \texttt{getAndSet(\ldots)} and \texttt{{incrementAndGet()}}, among various others.
+The APIs of \texttt{AtomicInt} closely resemble some of Java's \texttt{AtomicInteger} methods.
+The \texttt{AtomicInt} has some easily expected methods, like \texttt{{get()}} and \texttt{{set()}}, and also some borrowed from Java, and very similar to other C-level atomic operations, such as \texttt{getAndSet()} and \texttt{{incrementAndGet()}}.
 
-Especially useful are the so-called ``in-place'' Python methods, such as \texttt{my\_int += 1}, \texttt{my\_int *= 2}, etc.
+Especially useful are the so-called ``in-place'' Python methods, such as \texttt{my\-\_int += 1}, \texttt{my\_int *= 2}, etc.
 These methods are very effective for atomic operations because, instead of requiring a separation of reads/writes in Python code, they describe the entire mutation that the program wants to see applied.
 The operation can thus be efficiently retried within the same call to the relevant C routine, which performs the retry when the integer's value is contended, following the semantics of CAS atomic operations\@.
 
-The program can thus not worry about the correct usage of atomic CAS primitives, when using in-place methods.\footnote{%
-    Notice the similarity with \texttt{AtomicDict}'s proposed \texttt{aggregate} method, which permits to do essentially the same thing: fully describe a mutation, to be applied correctly by the internals of the routine.
-}
+The program can thus avoid worrying about the correct usage of atomic CAS primitives, when using in-place methods.
+Notice the similarity with \texttt{Atomic\-Dict}'s proposed \texttt{reduce} method, which permits to do essentially the same thing: fully describe a mutation, to be applied correctly by the internals of the routine.
 Instead, a usage similar to the following would yield inconsistent results, assuming that the \texttt{my\_thread} function is effectively the code run by multiple threads:
 \begin{lstlisting}[label={lst:atomic-int-bad}, language=Python]
     i = AtomicInt()
-    ...
+
     def my_thread():
       for x in range(100):
         i = i + 1
 \end{lstlisting}
 
-What happens in this case is that the value that \texttt{i} is holding, is first retrieved, in a manner similar to calling \texttt{{i.get()}}, the sum is performed, and then the result is stored in \texttt{i}, similarly to calling \texttt{{i.set(\ldots)}}.
+What happens in this case is that the value that \texttt{i} is holding, is first retrieved, the sum is performed, and then the result is stored in \texttt{i}, similarly to calling \texttt{{i.set(i.get() + 1)}}.
 These three actions comprising a mutation that employs two distinct methods of \texttt{AtomicInt}, cannot be correctly executed without the protection of an external lock.
 That is, the two methods being linearizable, does not entail that two successive calls to them are linearizable; in fact, the opposite is true.
 
 
 \subsection{Handles}\label{subsec:atomic-int-handles}
 
-It can easily be observed by profiling~\cite[examples/atomic\_int/counter.py]{cereggii}\footnote{%
-    For instance, with a tool like Linux's \texttt{perf}, available online at \url{https://perf.wiki.kernel.org/index.php/Main_Page}, last accessed \today.
-} that the running time is vastly dominated ($\approx$99\%) by concurrent reference counting and other Python thread-safety features, with the atomic increment being such a cheap operation in comparison.
+It can easily be observed by profiling~\cite[examples/atomic\_int/counter.py]{cereggii} that the running time is vastly dominated ($\approx$99\%) by concurrent reference counting and other CPython thread-safety features, with the atomic increment being such a cheap operation in comparison.
+Such is just a vast amount of overhead.
 
-An important observation is that those thread-safety features, and the concurrent reference counting thus required, are unnecessary for the correctness of \texttt{AtomicInt}, with its reference count being essentially modified only when the threads start using the object and then eventually releasing it, upon finishing their work.
+The reference count of \texttt{AtomicInt} is required to be modified only when the threads start using the object and then eventually releasing it, upon finishing their work.
+The many other reference counting operations are just overhead.
 
-Therefore, a simple, but very effective change was implemented.
-The \texttt{AtomicInt} object does not necessitate being referenced directly by the thread that wants to mutate it, instead it is also possible to access it indirectly through a handle.
-An \texttt{AtomicIntHandle} is an object that internally keeps a pointer to the \texttt{AtomicInt} object that it semantically references to.
+Therefore, a simple but very effective change was implemented.
+The \texttt{Atomic\-Int} object does not necessitate being referenced directly by the thread that wants to mutate it, instead it is also possible to access it indirectly through a handle.
+An \texttt{AtomicIntHandle} is an object that internally keeps a pointer to an \texttt{AtomicInt} object.
 Externally, it provides exactly the same APIs as \texttt{AtomicInt}, so that using or not the handle does not require substantial changes to a program's code.
-If the handle is created by the only thread that uses it, as it is intended, then it enjoys the fast-path for concurrent reference counting implemented in free-threading Python.\footnote{%
-    See~\S\ref{sec:concurrent-biased-reference-counting}.
-}
+If the handle is created by the only thread that uses it, as it is intended, then it enjoys the fast-path for concurrent reference counting implemented in free-threading Python.
+(See~\S\ref{sec:concurrent-biased-reference-counting}.)
 
-The same reference counting operations, thus performed by the object's owner thread, would be substantially cheaper.
+The same reference counting operations, thus always performed by the object's owner thread, would be substantially cheaper.
 So much so, that the observed running time of~\cite[examples/atomic\_int/counter.py]{cereggii} drops by a staggering $\approx$95\%.
 
-During an exchange with Sam Gross, the main author of the free-threading changes, he had indeed confirmed that the added burden of concurrent reference counting here exhibited is likely to remain in the free-threading build of Python, for the foreseeable future.
+During an exchange with Sam Gross, the main author of the free-threading changes, he had indeed confirmed that the added burden of concurrent reference counting here exhibited is likely to remain in the free-threading build of CPython, for the foreseeable future.
 Furthermore, he was convinced that using this design of handle indirection can be effective in contrasting these performance bottlenecks.
 
 
 \section{\texttt{AtomicShardedIntCounter}}\label{sec:atomicshardedintcounter}
 
-Here is presented a possibility for future specialization of \texttt{AtomicInt}.
-To further reduce contention, it is possible to restrict the usage of \texttt{AtomicInt} and then optimize it, based on the restricted semantics.
+There can be a useful specialization of \texttt{AtomicInt}.
+To further reduce contention, it is possible to restrict the usage of \texttt{AtomicInt} to that of a counter and then optimize it.
 
 In fact, if the integer itself is used as a counter, a very common application, then it is possible for the $T$ threads accessing it to have $T$ distinct counters upon which to count in isolation with each other.
-Since additions are commutative, the $T$ counters can be summed together lazily, only when the program wants to read the value of the counter, say by a \texttt{{get()}} operation.
-The result might then be cached to avoid the repetition of work when the counter has not been changed.
+Since additions are commutative, the $T$ counters can be summed together lazily only when the program wants to read the value of the counter, say by a \texttt{{get()}} operation.
+The result might then be cached to avoid the repetition of work when the value hasn't changed.
 
-In principle, this can be achieved in a manner similar to \texttt{AtomicDict}'s scheme for consistent size retrieval, described in~\S\ref{sec:consistent-size}.
+In principle, this can be achieved in a manner similar to \texttt{AtomicDict}'s scheme for consistent size retrieval, described in Section~\ref{sec:consistent-size}.
 The thread-local counters would be stored in a thread-local structure which also contains a lock.
 Such lock would behave in the same manner as \texttt{AtomicDict}'s accessors locks.
 

@@ -263,7 +263,7 @@ M.\ Micheal wrote in~\cite[\S2.3]{micheal-hash-tables}:
     The failure or delay of the garbage collector may prevent threads operating on lock-free objects from making progress indefinitely, thus violating lock-freedom.
 \end{quote}
 
-Such is undeniably correct, and therefore, the proposed design of \texttt{AtomicDict} cannot be considered lock-free, simply by virtue of the fact that its memory is managed through Python's garbage collector.
+Such is undeniably correct, and therefore, the proposed design of \texttt{Atomic\-Dict} cannot be considered lock-free, simply by virtue of the fact that its memory is managed through Python's garbage collector.
 Notwithstanding, this was a deliberate implementation detail and not a foundational piece in the design of \texttt{AtomicDict}.
 The fact that its internal data structures are traced with Python's GC is something that can be easily changed without compromising the design.
 The choice was chiefly made to simplify the implementation of \texttt{AtomicDict}.

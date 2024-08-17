@@ -54,13 +54,6 @@ Apart from this limitation, we also believe that the usage from Python code will
 
 \subsection{Results}\label{subsec:comparisons-results}
 
-Throughout the experiments we have observed a comparatively poor performance of \texttt{AtomicDict}, as measured in the number of operations completed per second; for instance, consider the experiments in Figure~\ref{fig:bad}.
-The performance of Maier's hash table, named Growt, is usually at least twice as high as \texttt{dict} and \texttt{AtomicDict}, often one or two orders of magnitude higher.
-We consider this to be caused by keys and values being of a fixed integer type.
-CPython's \texttt{dict}'s performance almost never scales with the number of threads, but is generally high.
-Compared to \texttt{dict} it is worth noting that while the performance may be worse, \texttt{AtomicDict} does guarantee the correctness of the output even in the face of concurrent mutations, while \texttt{dict}, crucially, does not.
-We find, though, that the specialized use-cases of \texttt{AtomicDict}, the \texttt{reduce}, \texttt{{batch\_lookup}}, and \texttt{fast\_iter} methods, show a very high throughput.
-
 \begin{figure}
     \begin{centering}
         \scalebox{0.4}{\input{figures/insert_growing.pgf}}%
@@ -70,18 +63,12 @@ We find, though, that the specialized use-cases of \texttt{AtomicDict}, the \tex
     \end{centering}
 \end{figure}
 
-\paragraph{Aggregation, a very common use-case.} As expected, the throughput of the sequential hash table \texttt{dict} almost never scales with the number of threads, across the experiments.
-The lookup experiments are notable outliers of this pattern, because of the optimistic lock avoidance described in paragraph ``Optimistically avoiding locking'' of Section~\ref{sec:thread-safety-of-builtin-data-structures}.
-
-Nevertheless, we find that \texttt{dict} exhibits some other less trivial patterns for performance gain, as shown in the aggregation experiment in Figure~\ref{fig:aggregation}.
-For \texttt{dict}, the increasing skew of input data does not deteriorate performance, as is generally the case for concurrent hash tables, and instead improves it, due to the relevant data being more frequently found in the cache and the lack of contention caused by atomic operations.
-For \texttt{AtomicDict}, we can see that its throughput is roughly on par with \texttt{dict} when the skew is small.
-When instead the skew is sufficiently high ($\geq 1.0$), the diminishing number of atomic operations required and the accumulation of an intermediate result into a thread-local table, evidently produce very significant performance gains.
-
-It is also possible to observe that the increase in skew from 0.25 to 0.95, increases the throughput for the Growt hash table as well.
-As the skew increases further, contention becomes a major scaling bottleneck.
-In fact, using \texttt{dict} with a single thread provides almost the same throughput, when the skew is 2.0.
-This is the reason why \texttt{reduce} was implemented for \texttt{AtomicDict} in the first place: rendering the concurrent hash table useful even with highly skewed data, a common pattern of real-world data.
+Throughout the experiments we have observed a comparatively poor performance of \texttt{AtomicDict}, as measured in the number of operations completed per second; for instance, consider the experiments in Figure~\ref{fig:bad}.
+The performance of Maier's hash table, named Growt, is usually at least twice as high as \texttt{dict} and \texttt{AtomicDict}, often one or two orders of magnitude higher.
+We consider this to be caused by keys and values being of a fixed integer type.
+CPython's \texttt{dict}'s performance almost never scales with the number of threads, but is generally high.
+Compared to \texttt{dict} it is worth noting that while the performance may be worse, \texttt{AtomicDict} does guarantee the correctness of the output even in the face of concurrent mutations, while \texttt{dict}, crucially, does not.
+We find, though, that the specialized use-cases of \texttt{AtomicDict}, the \texttt{reduce}, \texttt{{batch\_lookup}}, and \texttt{fast\_iter} methods, show a very high throughput.
 
 \begin{figure}
     \begin{centering}
@@ -92,8 +79,40 @@ This is the reason why \texttt{reduce} was implemented for \texttt{AtomicDict} i
     \end{centering}
 \end{figure}
 
+\paragraph{Aggregation, a very common use-case.} As expected, the throughput of the sequential hash table \texttt{dict} almost never scales with the number of threads, across the experiments.
+The lookup experiments are notable outliers of this pattern, because of the optimistic lock avoidance described in Section~\ref{sec:thread-safety-of-builtin-data-structures}.
+
+Nevertheless, we find that \texttt{dict} exhibits some other less trivial patterns for performance gain, as shown in the aggregation experiment in Figure~\ref{fig:aggregation}.
+For \texttt{dict}, the increasing skew of input data does not deteriorate performance, as is generally the case for concurrent hash tables, and instead improves it, due to the relevant data being more frequently found in the cache and the lack of contention caused by atomic operations.
+For \texttt{AtomicDict}, we can see that its throughput is roughly on par with \texttt{dict} when the skew is small.
+When instead the skew is sufficiently high ($\geq 1.0$), the diminishing number of atomic operations required due to the accumulation of an intermediate result into a thread-local table, evidently produce very significant performance gains.
+
+Due to limitations to our measurement instrumentation, it should be noted that the throughput of \texttt{AtomicDict} shown above should be 5--10\% less.
+In fact, the instrumentation only associates with \texttt{AtomicDict} the code that pertains to the \texttt{cereggii} shared object.
+For the case of reduce, some code is executed that pertains to the CPython shared object.
+By deeply examining the results of our measurements, we can see that the additional code executed by the \texttt{reduce} routine outside \texttt{cereggii} is fairly small ($< 10\%$).
+Additional effort was not put into refining the instrumentation so as to automatically account for this additional code.
+
+It should also be noted that while \texttt{reduce} can reach such high throughput, the overall wall-clock time is still affected by the Python code executed when calling the mutation function.
+In fact, most of the running time of the reduce experiment with skew = 2.0, is spent interpreting that routine.
+The cost of that routine is not associated with \texttt{AtomicDict} in the above Figure.
+
+It is also possible to observe that the increase in skew from 0.25 to 0.95, increases the throughput for the Growt hash table as well.
+As the skew increases further, contention becomes a major scaling bottleneck.
+In fact, using \texttt{dict} with a single thread provides almost the same throughput, when the skew is 2.0.
+This is the reason why \texttt{reduce} was implemented for \texttt{AtomicDict} in the first place: rendering the concurrent hash table useful even with highly skewed data, a common pattern of real-world data.
+
+\begin{figure}
+    \begin{centering}
+        \scalebox{0.4}{\input{figures/iteration.pgf}}%
+        \scalebox{0.4}{\input{figures/batch_lookup.pgf}}
+        \caption{Two experiments showing some effective design choices. On the right, the dashed lines represent the tables throughput without batching.}
+        \label{fig:prepotenza}
+    \end{centering}
+\end{figure}
+
 \paragraph{Some effective design choices.}
-There are two experiments which we could not find in the literature, but which are frequent use-cases of hash tables in general: iterating over the currently-stored set of keys, and looking up a given set of keys instead of a single one.
+There are two experiments which we could not find in the literature, but which are frequent use-cases of hash tables in general: iterating over the currently-stored set of keys, and looking up multiple keys instead of a single one.
 While Maier et al.\ mention the former use-case as ``Forall'' in their paper, they avoid producing an experiment.
 We additionally improve iterations by optionally providing partitioning between threads; refer to Section~\ref{subsec:iteration-partitioning} for further details.
 The latter is the design we proposed in Section~\ref{sec:batch-lookup} for amortizing memory access latencies.
@@ -108,10 +127,10 @@ The point itself varies widely between different systems, since it depends on th
 
 \begin{figure}
     \begin{centering}
-        \scalebox{0.4}{\input{figures/iteration.pgf}}%
-        \scalebox{0.4}{\input{figures/batch_lookup.pgf}}
-        \caption{Two experiments showing some effective design choices. On the right, the dashed lines represent the tables throughput without batching.}
-        \label{fig:prepotenza}
+        \scalebox{0.4}{\input{figures/book.pgf}}%
+        \scalebox{0.4}{\input{figures/book-3.13.pgf}}
+        \caption{The \texttt{book} experiment. On the left as run with the nogil fork, on the right with the first release candidate of CPython 3.13.}
+        \label{fig:book-3.13}
     \end{centering}
 \end{figure}
 
@@ -122,15 +141,6 @@ The \texttt{book} experiment was run with the updated interpreter and code, and 
 This was the only experiment we have been able to run, since most others rely on the \texttt{numpy} package which does not support this new CPython version, as of the time of writing.
 Given that we modified the code in a way that can impact performance, we should consider the results shown in Figure~\ref{fig:book-3.13} as inconclusive.
 However, we can notice a decrease in the single-threaded performance of \texttt{dict}, which we can confirm.
-
-\begin{figure}
-    \begin{centering}
-        \scalebox{0.4}{\input{figures/book.pgf}}%
-        \scalebox{0.4}{\input{figures/book-3.13.pgf}}
-        \caption{The \texttt{book} experiment. On the left as run with the nogil fork, on the right with the first release candidate of CPython 3.13.}
-        \label{fig:book-3.13}
-    \end{centering}
-\end{figure}
 
 \subsection{Reference Counting and Other Overheads}\label{subsec:measurements-overheads}
 
