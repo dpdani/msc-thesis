@@ -10,8 +10,7 @@ There are also included some general remarks about hash computation in Python.
 
 We then explore concurrent hash table designs, beginning with Maier's hash table which was the main source of design inspiration for \texttt{AtomicDict}.
 Important differences with the hashing techniques used in CPython's \texttt{dict} are highlighted.
-We then continue exploring novel hash table designs which are all based on Maier's design.
-It has been found to be an important milestone in the literature.
+We then continue exploring novel hash table designs which are all based on Maier's design: it has been found to be an important milestone in the literature.
 Two designs are explored: Bolt and DRAMHiT, both of which contributed some design decisions in \texttt{AtomicDict}, albeit less prominently.
 
 We conclude with some remarks on the feasibility of completely lock-free hash tables, finding that they are in fact not practical due to the limitations of currently available hardware.
@@ -55,17 +54,17 @@ In combination with the necessity of keeping the table sufficiently sparse (in o
 He instead proposed having two separate tables: one sparse table, called the index, and another, dense table, called the entries table, which the index table refers to.
 
 Insertion order is preserved because iterations read the entries table, and new items are appended to that table.
-The actual hash table is the sparse index, which can fit into two cache lines for tables of size $m \leq 128$.
+The actual hash table is the sparse index, which can fit into two cache lines for tables of capacity $m \leq 128$.
 
 To further reduce memory usage, the size of index slots will vary depending on the size of the key set: when it is small there is no need to reference the entries table with 64-bit numbers.
 Instead, the slot size is chosen dynamically, from a lower bound of 1-byte, when $m \leq 128$, to a maximum of 8 bytes for very large hash tables.
 
-In order to accomodate Key Sharing (see above), the entries table may be further split into a key table, and a values table.
+In order to accomodate key sharing, the entries table may be further split into a key table, and a values table.
 
 Splitting the sparse index table from the dense entries table, improves on both the storage space and the iteration speed.
 In fact, if we call $\alpha$ the load factor of the dictionary (i.e.\ the number of occupied slots over the total number of slots), there not need be $(1 - \alpha)m$ empty 24-bytes entries for the unused slots in the hash table.
 Instead, there will be $(1 - \alpha)m$ empty $O(8)$-bytes slots in the index.
-That is, the entries table will have a load factor of $\sim$100\%: entirely filled, except for deleted entries.
+That is, the entries table will have a load factor $\approx$100\%: entirely filled, except for deleted entries.
 When iterating over the keys in the dictionary, the dense entries table will serve as the basis for the iteration, instead of the sparse index.
 Thus, reading unoccupied slots is avoided, and the memory bandwidth required for an iteration is reduced.
 
@@ -103,10 +102,10 @@ The reader will probably have noticed how these properties are generally true fo
 With hash functions being so foundational to the implementation of hash tables, it is important to make one explicit remark.
 There is no guarantee that the hash functions we indirectly employ (and that CPython's \texttt{dict} employs, too) enjoy the above properties.
 That is to say, a hash function written in Python code may perform any arbitrary operation.
-For instance, it may very well acquire a lock, initiate a request to a remote machine on the network, read a large file from disk, or run an $O(n!)$ algorithm to produce the result.
+For instance, it may acquire a lock, initiate a request to a remote machine on the network, read a large file from disk, or run an $O(n!)$ algorithm to produce the result.
 
 Of course, such behaviors would be completely unexpected of a hash function.
-We will therefore resort to assume that those properties hold, as we have no control over those functions.
+We will therefore resort to \emph{assume} that those properties hold, as we have no control over those functions.
 
 
 \subsection{With the Free-Threading Changes}\label{subsec:dict-free-threading}
@@ -114,7 +113,7 @@ We will therefore resort to assume that those properties hold, as we have no con
 Without the GIL, concurrent accesses to a sequential hash table such as \texttt{dict} may yield inconsistent program states, and lead to interpreter crashes.
 Free-threading CPython requires that concurrent accesses to \texttt{dict} must be synchronized through a mutex.
 
-Size retrieval of a \texttt{dict} is exempt from this requirement, since the size field itself is maintained correct with the \texttt{dict}'s mutex, and is thus easily available for concurrent reading.
+Size retrieval of a \texttt{dict} is exempt from this requirement, since the size field itself is maintained correct with the \texttt{dict}'s mutex, and is thus easily available for concurrent, wait-free reading.
 
 Two operations are also partially exempt.
 They are:
@@ -140,7 +139,7 @@ The following can happen:
 	\item $t_u$ observes that $v$'s reference count is 0, and proceeds with a delayed free of $v$;
 	\item $t_l$ tries to increment $v$'s reference count, but fails because it is 0;
 	\item $t_l$ falls back to the slow path and is obstructed in the acquisition of $H$'s lock, which $t_u$ still holds;
-	\item {\ldots}eventually{\ldots}
+	\item \emph{{\ldots}eventually{\ldots}}
 	\item $t_u$ releases $H$'s lock;
 	\item w.l.o.g.\ assume that $t_l$ acquires the lock (it may be that another thread acquires it first, but later releases it, giving $t_l$ another chance to acquire it, infinitely often);
 	\item $t_l$ restarts the lookup operation, and finds the position of $k$ in $H$;
@@ -160,7 +159,7 @@ The following can happen:
 	\item $t_i$ resizes $H$;
 	\item $t_l$ notices that a concurrent resize has happened (let us avoid explicating how this check is performed);
 	\item $t_l$ falls back to the slow path and is obstructed in the acquisition of $H$'s lock, which $t_i$ still holds;
-	\item {\ldots}eventually{\ldots}
+	\item \emph{{\ldots}eventually{\ldots}}
 	\item $t_i$ inserts $k'$;
 	\item $t_i$ releases $H$'s lock;
 	\item w.l.o.g.\ assume that $t_l$ acquires the lock;
@@ -209,7 +208,6 @@ This is too severe a limitation for a Python hash table: it would in fact not be
 
 In order for Python code to interact with this limited hash table, the keys and values would need to be cast to Python \texttt{int} types.
 While possible in principle, it also would entail a performance decrease, since the \texttt{int} objects themselves would be contended, even between lookups.
-Two concurrent lookups over the same key $k$, would necessarily contend on the reference count of the associated \texttt{int} object.
 Therefore, it would make no difference to store the \texttt{int} object pointers themselves in the hash table.
 
 In~\cite[\S5.7]{maier}, Maier et al.\ note that it is possible to generalize their hash table to complex keys and values, albeit with some impact on performance.
@@ -267,8 +265,8 @@ In fact, with regular linear probing it is necessary to visit the entire probe b
 The approach taken to Robin Hood hashing by this author is presented in Section~\ref{sec:lazy-robin-hood}.
 
 \paragraph{Performance under contention.}
-Contentious accesses are a common pattern in real-world usages of concurrent hash tables, as commonly known.
-Bolt scheme of using fine-grained locking would seem especially subject to degradation in high-contention scenarios, as also noted by Kahssay himself.
+Contentious accesses are a common pattern in real-world usages of concurrent hash tables.
+Bolt's scheme of using fine-grained locking would seem especially subject to degradation in high-contention scenarios, as also noted by Kahssay himself.
 Let us compare the approaches of Maier et al.\ \cite[\S8.4, ``Performance under contention'']{maier} and of Kahssay~\cite[\S7.4]{bolt} in evaluating these scenarios.
 Differently from Maier, Kahssay only evaluates a Zipf distribution with a contention parameter $\theta = 0.75$.
 In a Zipf distribution it can be that $\theta \in [0, 2]$, which are the bounds considered by Maier.
@@ -307,9 +305,9 @@ In fact, it can be easily seen that if one thread $t$ performs a lookup operatio
 Furthermore, if there were no running threads other than $t$, the prefetch window would never be filled, and $t$ would be blocked for an unbounded amount of time; even if it is the only thread running.
 By the operations presented in the paper, it seems as though a single thread performing a single key lookup is not an effectively supported use-case, which is absurd.
 
-Finally, the design choice that made the author most reluctant to accept the design of DRAMHiT was its asynchronous interface.
+Finally, the choice that made the author most reluctant to accept the design of DRAMHiT was its asynchronous interface.
 Only accessing prefetched memory is a very desirable characteristic, but in order to do so DRAMHiT chose to radically change the external interface of hash tables.
-In fact, the very common operations enumerated in Section~\ref{sec:hash-tables} are not directly available.
+In fact, the common operations enumerated in Section~\ref{sec:hash-tables} are not directly available.
 Instead, those operations only entail a \emph{request} to the hash table.
 The program needs to also check for the availability of the response before reading the result.
 That is, a program as simple as \texttt{{v = H.lookup(k)}} has to become something along the lines of:

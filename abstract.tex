@@ -5,12 +5,12 @@
 
 The Python community is increasingly interested in parallelization.
 One of the biggest changes to the CPython interpreter, the most common implementation of the language, is set to be released this October 2024.
-In it, the greatest long-standing bottleneck to multithreading performance scaling is removed: the Global Interpreter Lock.
+In it, the greatest long-standing bottleneck to multithreading performance scaling, the Global Interpreter Lock (GIL), is removed.
 We can expect more Python programmers to start choosing multithreading concurrency models in the future.
-We can also expect concurrent data structures to gather increasing interest.
+We can also expect concurrent data structures to gather increasing interest in the coming future.
 
-Concurrent hash tables among the most important concurrent data structures, and the built-in sequential hash table of CPython is ubiquitously used within the interpreter and throughout the community.
+Concurrent hash tables are among the most important concurrent data structures, and the built-in sequential hash table of CPython is ubiquitously used within the interpreter and throughout the community.
 We find that the research for efficient, concurrent hash tables has been very active in recent years, and many implementations are available for C programs.
 
 We propose here an efficient concurrent hash table that can be used from Python code directly, albeit implemented in C.
-We additionally introduced it to the Python community.
+We introduced it to the Python community.

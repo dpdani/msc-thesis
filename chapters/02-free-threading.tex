@@ -12,7 +12,7 @@ QSBR delays freeing objects until no thread can be in the process of accessing t
 To support this change, it was also necessary to change CPython's memory allocator to mimalloc, a thread-safe alternative.
 Adjustments were also necessary for CPython's GC, which so becomes a ``stop-the-world'' collector.
 
-Later, we also detail the thread-safety of built-in data structures.
+Finally, we also detail the thread-safety of built-in data structures.
 Per-object mutexes maintain the atomic operations previously ensured by the GIL, similarly to Java's model, with some read-only operations optimized to avoid locking, relying on some modifications to mimalloc for consistency.
 
 
@@ -78,7 +78,7 @@ This API is also used in this thesis to elect the leader thread for a hash table
 
 For some particular objects, it does not make sense to keep a consistent reference count.
 The owner's reference count also stores two flags, used to indicate that the object is immortal, or that it can use deferred reference counting.
-Immortal objects are objects whose lifetime equals the lifetime of the program, such as ``interned strings, small integers, statically allocated PyTypeObjects, and the \texttt{True}, \texttt{False}, and \texttt{None} objects.''
+Immortal objects are objects whose lifetime equals the lifetime of the program, such as the \texttt{True}, \texttt{False}, and \texttt{None} objects.
 
 Reference counts for some non-immortalized, contended objects may be deferred.
 Namely, for ``top-level functions, code objects, modules, and methods,'' because ``these objects don't necessarily live for the lifetime of the program, so immortalization is not a good fit.''
@@ -99,7 +99,7 @@ Although not directly referred to as QSBR, it was initially described in~\cite[\
 CPython's implementation of QSBR closely follows FreeBSD's implementation of Globally Unbounded Sequences, as noted by Gross in the referred issue.
 
 This mechanism serves to support lock-free read accesses to built-in data structures.
-When a thread $t_r$ optimistically avoids locking a shared \texttt{dict} $H$'s keys array, due to a read-only access, an unsafe circumstance may arise.
+For example, when a thread $t_r$ optimistically avoids locking a shared \texttt{dict} $H$'s keys array, due to a read-only access, an unsafe circumstance may arise.
 If $H$ is resized (migrated) by another thread $t_m$ while $t_r$ is operating its read, it may be that $t_m$ frees $H$'s keys object before $t_r$ gets a chance to read it.
 This circumstance may arise while $H$'s reference count remains $> 0$, thus this problem does not pertain concurrent reference counting.
 
@@ -120,8 +120,8 @@ In the above example, $t_m$ is not allowed to free the keys immediately, instead
     \item \ldots\emph{eventually}\ldots
     \item a thread $t_q$ (it may be that $t_q \equiv t_r \vee t_m \equiv t_m$) is in a quiescent state, because it is running a GC cycle;
     \item $t_q$ observes that there exist a lower bound $\sigma$ to the sequence number of every thread $\min_{t \in T} S(t) \geq \sigma$;
-    \item if $\sigma < S + 1$, $k$ will not be freed ($g(k) > \sigma$);
-    \item if $\sigma \geq S + 1$, $k$ will be freed (and removed from $Q$).
+    \item if $g(k) > \sigma$, $k$ will not be freed;
+    \item otherwise, $k$ will be freed, and removed from $Q$.
 \end{enumerate}
 
 This is a generic mechanism that can help implement lock-free data structures.
@@ -139,13 +139,13 @@ It is described in detail in~\cite{mimalloc}.
 
 Some changes to mimalloc were necessary in order to support QSBR, essentially around restricting page reuse.
 When a mimalloc ``page'' (not equiv.\ to an OS memory page) is empty, mimalloc may decide to reuse it for incoming allocation requests.
-Though, it may be that an empty page contains objects whose memory free operation was deferred, due to QSBR\@.
+Though, it may be that an empty page contains objects whose free operation was deferred, due to QSBR\@.
 Therefore, it would be unsafe to reuse the page for new objects.
 Instead, the following happens:
 \begin{enumerate}
     \item a thread deletes an object, which happened to reside in mimalloc page $p$;
     \item $p$ is now empty;
-    \item $p$ gets tagged with the global sequence number $S$ (described earlier in~\S\ref{sec:qsbr}), s.t.\ $\tau(p)~=~S$;
+    \item $p$ gets tagged with the global sequence number $S$ (described earlier in Section~\ref{sec:qsbr}), s.t.\ $\tau(p)~=~S$;
     \item $p$ may be reused when a later global sequence number $S' > \tau(p)$ is observed.
 \end{enumerate}
 
@@ -156,7 +156,7 @@ Crucially, this modification to mimalloc ensures that threads which may still re
 
 CPython's GC was also changed for the free-threading build to work.
 Foremost, it was important to run the GC during ``stop-the-world'' pauses, to restore thread-safety guarantees that were previously provided by the GIL\@.
-Additionally it was also necessary to integrate it with deferred, and biased reference counting.
+Additionally, it was also necessary to integrate it with deferred and biased reference counting.
 
 To support ``stop-the-world'' pauses a status is assigned to each thread; one of ``attached,'' ``detached,'' or ``gc''.
 The ``attached'' and ``detached'' states follow the semantics that were previously assigned to the acquisition and release of the GIL\@.
@@ -175,7 +175,7 @@ The deterministic presence of quiescent states is required for QSBR to function 
 \section{Thread-safety of built-in data structures}\label{sec:thread-safety-of-builtin-data-structures}
 
 Most operations in Python are not atomic, but historically some were in fact made implicitly atomic due to the presence of the GIL\@.
-For instance, calling \texttt{{list(set)}} atomically creates a list from a set, because the GIL is held for the entire duration of the call.
+For instance, calling \texttt{{list(set)}} atomically creates a list from a set, because the GIL is held for the duration of the call.
 The thread safety guarantees of built-in objects that were implicitly provided by the GIL, are retained, as detailed in~\cite[\S Container Thread-Safety]{pep703}.
 
 Note that this does not mean that all operations on built-in data structures are thread safe.
@@ -191,5 +191,5 @@ This is done by locking first the object whose memory address is lower, and then
 To improve performance, a few operations have been selected to be executed without any locking.
 They are frequently used, read-only operations on \texttt{list} and \texttt{dict} objects (e.g.\ \texttt{{my\_list[0]}}).
 Such operations may fall back to a slower path which acquires the involved objects' mutexes, in case the container objects were concurrently modified during the read operation.
-(This optimistic fast-path requires the changes to mimalloc described in~\S\ref{sec:mimalloc}.
+(This optimistic fast-path requires the changes to mimalloc described in Section~\ref{sec:mimalloc}.
 See also~\cite[\S Optimistically Avoiding Locking]{pep703}, for further details.)

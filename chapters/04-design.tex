@@ -97,7 +97,9 @@ This reduces the cost of having split index and data tables.
 That is, when a lookup visits the index, it reads the distance-0 slot of the searched key: a random address in memory.
 Then, it linearly reads the nodes in a probe, which are likely to be in the same cache line of the distance-0 slot.
 Each time a tag indicates that the node may refer to an entry containing the searched key, the entry must be read, at a different, random address in memory.
-The tag serves to amortize the cost of the second, random memory read.
+The tag serves to amortize the cost of the second random read.
+It is possible to observe from Table~\ref{tab:nodes} that there are definite minimum and maximum sizes, respectively of $2^{6} = 64$ and $2^{56} \approxeq 7.2 \times 10^{16}$.
+
 
 \subsection{Reservation Buffers}\label{subsec:reservation-buffers}
 
@@ -106,7 +108,7 @@ When threads want to add a new key into the hash table, the most-recently added 
 Effectively, all inserting threads may be trying to contend some entry in one page.
 To reduce this contention, first we pick a strategy in which contention is naturally reduced, then we additionally make threads reserve more than one entry at a time: the necessity for atomic writes on the data table is greatly diminished.
 
-The degree to which contention is exhibited depends on the strategy with which threads decide which free entry in the page they wish to take for the new item.
+The degree to which contention is exhibited depends on the strategy with which threads decide which free entry in the page they wish to reserve for the new item.
 Consider a strategy in which the lowest-numbered entry is always chosen: every thread always tries to reserve the same entry, with only one thread succeeding at any given time.
 A simple, yet much better, alternative strategy is to treat the page itself as a hash table.
 That is, instead of choosing an entry based on the current availability, an entry is chosen based on the hash of the key.
@@ -130,14 +132,14 @@ That also entails that the entries in the reservation buffers need to be changed
 \section{Migrations}\label{sec:migrations-design}
 
 \texttt{AtomicDict} is a general hash table that can be resized to store an arbitrary number of keys.
-(Up to hardware limits.)
+(Up to $2^{56}$.)
 The process of increasing or decreasing the table capacity is called a \emph{migration}.
 It is not a lock-free process, because it was found that lock-free migrations are not feasible.
 (See Section~\ref{sec:on-the-feasibility-of-completely-lock-free-hash-tables}.)
 When a migration is initiated, a leader thread is elected and it allocates the new hash table.
 It additionally performs some bookkeeping operations on the data table.
 After this initial phase completes, other threads can join and help the migration process.
-This second phase is essentially Maier's proposed migration routine.
+This second phase is essentially Maier's migration routine.
 
 In \texttt{AtomicDict} a migration can be initiated from an insertion that found the approximate size of the table to be exceeding the maximum fill ratio of 2/3, from a deletion that found the approx.\ size to be less than the minimum fill ratio of 1/3, or it can be requested from the program that wishes to recover the Robin Hood invariants.
 The current size of the hash table is approximated based on the number of pages in the data table.
@@ -189,10 +191,10 @@ This crucial characteristic, which is required e.g.\ for the re-ordering of data
 A few are described in the following sections.
 In particular, it enables a very simple mechanism for ensuring that all accessors come to know the presence of a hash table migration, for establishing the correct size of the hash table, and for performing a sequentially consistent iteration of the items in the hash table.
 
-All of these operations are called synchronous because they all share the common necessity to be carried out sequentially by one thread, or that at least one part of their execution needs to be performed sequentially.
+All of these operations are called synchronous because they all share the common necessity to be carried out sequentially by one thread, at least in part.
 For instance, the hash table migration enjoys the help of more than one thread, but requires a step in which the leader performs the necessary alterations to the data table before other threads can join in the migration.
 
-The addition of this mechanism ensures that the hash table presented here is capable both of performant lock-free operations, and of complex operations that require the exclusive access to the entire dictionary in order to be performed without a prohibitive number of expensive atomic memory writes.
+The addition of this mechanism ensures that the hash table presented here is capable both of lock-free operations, and of complex operations that require the exclusive access to the entire dictionary in order to be performed without a prohibitive number of expensive atomic writes.
 The properties that a synchronous operation is sequential and ensured to be mutually exclusive make it also very simple to be explained and understood, an important characteristic for collaborative development.
 
 Do note that the presence of a synchronous operation does not obstruct concurrent lookup operations, as also described in the relevant later sections.
@@ -200,7 +202,7 @@ The meaning is that for concurrent migrations, the lookup linearizes on the stat
 This exemption of lookups from the participation in migrations follows~\cite[\S5.3.2, Preventing Concurrent Updates to Ensure Consistency]{maier}.
 
 
-\section{Lazy Robin-Hood}\label{sec:lazy-robin-hood}
+\section{Lazy Robin Hood}\label{sec:lazy-robin-hood}
 
 To reduce the cost of failing lookups we chose to employ the Robin Hood hashing scheme.
 We take a lazy approach to this scheme in order to maintain lock-freedom for the insertion routine.
@@ -213,12 +215,10 @@ According to~\cite[Corollary to Theorem~3]{robin-hood}, the expected number of c
 Such is a relatively low number, thus we can steal $\log \log n$ bits from the index nodes.
 We do so, by following the values in Table~\ref{tab:nodes}.
 
-It is possible to observe from Table~\ref{tab:nodes} that there are definite minimum and maximum sizes, respectively of $2^{6} = 64$ and $2^{56} \approxeq 7.2 \times 10^{16}$.
-
 The laziness in our approach comes from the fact that if the \emph{aligned} size of the write required to atomically insert the node into the index exceeds 128-bits, then we refrain from maintaining the Robin Hood invariants at all, for we would need to employ more than one atomic write in order to store the newly inserted key.
 This is because we cannot use the hardware~\cite[CMPXCHG--Compare and Exchange]{x86-64} instruction over more than 16-bytes.
 The instruction further requires that the write must be 16-byte aligned.
-Thus, it is not always the case that atomic write required can be actually carried out, because the re-ordering of nodes for the Robin Hood invariants may cross a 16-byte boundary.
+Thus, it is not always the case that the atomic write required can be actually carried out, because the re-ordering of nodes for the Robin Hood invariants may cross a 16-byte boundary.
 
 When the distance cannot be stored in $O(\log \log n)$ space or when a node cannot be inserted in keeping with the Robin Hood invariants, we say that its distance is $\infty$ and store it as $\log \log n - 1$ (the maximum distance).
 When a node has distance equals to the maximum distance, we say it is a non-compact node.
@@ -227,8 +227,8 @@ Before actually inserting a key that does not maintain the Robin Hood invariants
 Upon initialization, and after certain migrations, the hash table is marked as compact.
 A compact operation can be requested by the user to recover the Robin Hood invariants.
 
-When a new node could be inserted, respecting the requirements for our lazy robin hood, but it should be inserted at a distance greater then the maximum, we initiate a grow migration, as described in~\S\ref{sec:migrations}.
-In effect, we have a local trigger for our migrations that doesn't require global knowledge of the table.
+When a new node could be inserted, respecting the requirements for our lazy robin hood, but it should be inserted at a distance greater then the maximum, we initiate a grow migration, as described in Section~\ref{sec:migrations}.
+Effectively, we have a local trigger for our migrations that doesn't require global knowledge of the table.
 We can observe the local effect of collisions to determine that the table size is too small, and take action accordingly.
 One may argue that a degenerate set of hashes can continuously trigger migrations.
 While this is true in principle, do note an implication of Table~\ref{tab:nodes}: starting from a table capacity of $2^9 = 512$, the maximum distance is 16, while the number of nodes in a 16-byte-aligned region of memory (a quad word), is 8.
@@ -242,12 +242,12 @@ Not all hash table implementations provide methods for operating on multiple key
 This is not an issue in principle, because one of the basic operations can be called multiple times.
 We find that providing methods that operate on multiple keys can significantly increase the efficiency of those operations.
 The amortization scheme described in this Section is intended to be an alternative to the one proposed in~\cite{dramhit}.
-With this proposal, there is no need to radically the interface of the hash table: some additional methods are provided instead.
+With this proposal, there is no need to radically change the interface of the hash table: some additional methods are provided instead.
 
 Essentially, the costs that we desire to amortize are the stalls that a processor naturally encounters while waiting for the memory subsystem to respond.
 In a hash table, necessarily, most reads are random, and thus unlikely to enjoy caching or hardware pre-fetching.
 When a key is looked up, inserted, updated, or deleted, the hash is computed and the corresponding slot or bucket is retrieved from memory.
-If the program knows, by its own logic, that it will necessitate to read or mutate multiple keys, then the slots of the corresponding keys can be prefetched, before the processor is stalled, waiting to read those locations.
+If the program knows, by its own logic, that it will necessitate to read or mutate multiple keys, then the slots of the corresponding keys can be prefetched, before the processor is stalled waiting to read those locations.
 Even when the requested number of keys is 2 some gains can be observed from this scheme.
 In fact, it becomes very likely that the processor is stalled waiting for the first read to complete, and that the second one is completed together with the first, so that the processor isn't stalled again.
 
@@ -263,7 +263,7 @@ M.\ Micheal wrote in~\cite[\S2.3]{micheal-hash-tables}:
     The failure or delay of the garbage collector may prevent threads operating on lock-free objects from making progress indefinitely, thus violating lock-freedom.
 \end{quote}
 
-Such is undeniably correct, and therefore, the proposed design of \texttt{Atomic\-Dict} cannot be considered lock-free, simply by virtue of the fact that its memory is managed through Python's garbage collector.
+Such is undeniably correct, and therefore, the proposed design of \texttt{Atomic\-Dict} cannot be considered lock-free, simply by virtue of the fact that its memory is managed through CPython's GC.
 Notwithstanding, this was a deliberate implementation detail and not a foundational piece in the design of \texttt{AtomicDict}.
 The fact that its internal data structures are traced with Python's GC is something that can be easily changed without compromising the design.
 The choice was chiefly made to simplify the implementation of \texttt{AtomicDict}.
@@ -274,6 +274,6 @@ The library also exposes C header files (though, their standalone usage has not 
 For those use-cases that don't employ Python code, but rather directly call \texttt{AtomicDict}'s C functions, true lock-freedom can be of interest.
 
 Changing the implementation to not be based on the provided GC, but instead using a dedicated memory management system, is entirely possible; albeit requiring a lot of additional work.
-One way this can be achieved is by implementing what Micheal describes in~\cite{micheal-safe-reclamation}, which employs so-called \emph{hazard pointers} (or any other suitable algorithm).
+One way this can be achieved is by implementing what Micheal describes in~\cite{micheal-safe-reclamation}, which employs so-called \emph{hazard pointers}, or any other suitable algorithm.
 
 Serious effort was not put into looking at this possible implementation change, as of the time of writing.

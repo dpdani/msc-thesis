@@ -8,12 +8,13 @@ We then review the state of the art in concurrent hash table design, detail the 
 
 Overall, this work provides a significant contribution to the field of concurrent data structures for Python and offers practical insights for its community as it prepares for new possibilities in parallel computing with the upcoming changes to CPython.
 
-This Chapter begins by recalling hash tables and their many applications in computing, and then delves into the relevance of concurrent hash tables.
+This Chapter begins by recalling hash tables and their many applications in computing.
+It then delves into the relevance of concurrent hash tables.
 The Chapter also touches on CPython's built-in hash table, \texttt{dict}, which is widely used within the CPython interpreter and in the outer Python ecosystem.
 The final Section introduces ``free-threading Python,'' an experimental build of CPython that removes the GIL in the upcoming 3.13 release.
 
 
-\section[Hash tables, concurrent hash tables, and their applications]{Hash tables, concurrent hash tables, and\\their applications}\label{sec:hash-tables}
+\section{Hash tables and their applications}\label{sec:hash-tables}
 
 A hash table is a data structure that stores a set of distinct elements, called \emph{keys}, and associates with each of them a \emph{value}.
 A \emph{{hash function}} $h(k)$ is used to determine a unique position for each key $k$ in an array of \emph{buckets} (or \emph{slots}), in which the desired key-value association can be found.
@@ -23,29 +24,29 @@ The mechanism with which a hash table handles collisions is called \emph{{collis
 
 Hash tables support common operations, which are executed in expected constant time:
 \begin{enumerate}
-    \item an \emph{insert} creates a new (non-previously-existing) association of a key to a value;
+    \item an \emph{insert} creates a new (non previously existing) association of a key to a value;
     \item an \emph{update} replaces the value associated with a certain key with a new value;
     \item a \emph{delete} removes a key-value association; and
-    \item a \emph{lookup} returns the value associated with a certain key; in particular, a lookup is said to be \emph{successful} if it in fact returns said value, or alternatively it is said to \emph{fail}.
+    \item a \emph{lookup} returns the value associated with a certain key; in particular, a lookup is described as \emph{successful} if it in fact returns said value, or alternatively it is described as \emph{failing}.
 \end{enumerate}
 
 Implementations of hash tables are generally distinguished by their choice of hash function and of collision resolution.
-Common implementation of hash tables include:
+Common implementations of hash tables include:
 \begin{itemize}
     \item open addressing, where items are placed into an array of slots, and collisions are resolved by displacing an item at slot $x$ to the next available slot $f(x)$, which may be computed by:
     \begin{itemize}
         \item linear probing, i.e.\ $f$ is a linear function;
         \item double hashing, i.e.\ $f$ is another hash function, distinct from $h$; or
     \end{itemize}
-    \item separate chaining, also known as closed addressing, where items are placed into linked lists called buckets and collisions are resolved by appending to the bucket.
+    \item separate chaining, also known as closed addressing, where items are placed into linked lists called buckets and collisions are resolved by appending to the buckets.
 \end{itemize}
 
 \paragraph{Applications of Hash Tables.}\label{par:applications-of-hash-tables}
 
-Hash tables are ubiquitous in computer programs.
+Hash tables are ubiquitous in computing.
 They are taught in entry level Computer Science courses, and form the basis of many programs.
 Common applications include: map-reduce systems, databases (notably, their indexing and aggregation capabilities), caching systems, and dynamic programming, among others.
-A characteristic common to these applications is that hash table access can dominate their execution time.
+A characteristic that is common to these applications is that hash table access can dominate their execution time.
 
 \subsection{Concurrent Hash Tables}\label{subsec:concurrent-hash-tables}
 
@@ -70,20 +71,20 @@ It is an important property of concurrent data structures: a method call carried
 \end{quote}
 Wait-freedom is a more stringent property:
 \begin{quote}
-    A method is \emph{wait-free} if it guarantees that every call finishes its execution in a finite number of steps.
+    A method is \emph{wait-free} if it guarantees that \emph{every} call terminates in a finite number of steps.
 \end{quote}
 
 These two are very desirable properties of concurrent data structures: they imply that threads don't need to wait for any other thread's work to complete, before completing their own work (wait-freedom), or that at least one thread can always make progress (lock-freedom).
 
-In terms of Amdahl's Law, the implication is that the sequential part of a program ($1 - p$) is very small, so that the speedup scales almost linearly with the number of threads.
+In terms of Amdahl's Law, the implication is that the sequential part of a program is very small, so that the speedup from parallelization scales almost linearly with the number of threads.
 That is, for $S$ being the speedup gained by parallelizing a program, $p$ being the parallelizable fraction of the program, and $n$ being the number of parallel processors:
 \[
-    S = \frac{1}{1 - p + \frac{p}{n}}, \text{~with~} (1 - p) \ll p.
+    S = \frac{1}{1 - p + \frac{p}{n}}, \text{~with~desired~} (1 - p) \ll p.
 \]
 
 The hash table design proposed in this Thesis is almost entirely lock-free.
 Some well-defined relaxations of the lock-freedom property are taken in this design, and elaborated in Section~\ref{sec:migrations-design}.
-These relaxations are not a novel contribution.
+These relaxations are not a novel contribution to the field of concurrent hash tables.
 
 
 \section{Python and its Built-in Hash Table}\label{sec:dict-intro}
@@ -95,14 +96,14 @@ The CPython interpreter is the reference implementation of the Python language, 
 Other implementations of Python exist, but are less popular.
 They are often specialized implementations that improve the performance of certain workloads.
 
-Python has a built-in hash table, named \texttt{dict}, that is considered an integral part of the language.
+Python has a built-in hash table, named \texttt{dict}, which is considered an integral part of the language.
 It is a standard type, used in virtually \emph{every} Python program, either explicitly, by directly creating a \texttt{dict} instance, or implicitly.
 In fact, the CPython interpreter may create dictionaries in order to create an instance of a class (a very frequent operation in an object-oriented language).
-The attributes of an object are almost entirely stored in a hash table, which can also be accessed directly.
+The attributes of an object are entirely stored in a hash table, which can also be accessed directly.
 (There exist minor exceptions.)
 In fact, the set of attributes of a Python object may be altered at runtime, thus differing from the one specified in its class.
 
-An exploration on the usages of the built-in hash table has been carried out and presented in Section~\ref{sec:dict-metrics}.
+An exploration on the usages of the built-in hash table has been carried out and it is presented in Section~\ref{sec:dict-metrics}.
 For a discussion on \texttt{dict}'s design, refer to Section~\ref{sec:python-dict-review}.
 For a more thorough explanation of the common usages of CPython's \texttt{dict}, refer to~\cite[\S Principal Use Cases for Dictionaries]{dict-notes}.
 
@@ -111,7 +112,7 @@ For a more thorough explanation of the common usages of CPython's \texttt{dict},
 
 A known limitation of the CPython interpreter (not the Python language) is the presence of a Global Interpreter Lock (GIL).
 This lock is used to protect the interpreter's internal state from concurrent mutations.
-It simplified significantly the implementation of the CPython interpreter over the years, at the cost of Python programs being often unable to efficiently use the multiple processors available in the system.
+It has simplified significantly the implementation of the CPython interpreter over the years, at the cost of Python programs being often unable to efficiently use the multiple processors available in the system.
 The limitation does not affect \emph{all} CPython-interpreted programs, in the sense that several programming paradigms do not make use of multi-threading regardless of the GIL, and are thus not actually impacted by its presence.
 
 Examples of these paradigms, except from obviously single-threaded programs, include:
@@ -143,8 +144,8 @@ The work presented later in this Thesis is based on the original reference imple
 This choice was made because free-threading Python had not been implemented when the work for this thesis began in October 2023.
 Porting this work to Python 3.13 is planned.
 
-In the next Chapter there is an account of the free-threading-related changes to the CPython interpreter.
-The ones described seem to be fully implemented, with the remaining work for the next release being primarily focused on resolving numerous, minor issues.
+In the next Chapter, Free-Threading Python is described in more detail.
+The changes described in this Thesis seem to be fully implemented, with the remaining work for the next release being primarily focused on resolving numerous minor issues.
 
 Overall, free-threading is anticipated to result in a 6\% performance overhead for single-threaded executions and an 8\% overhead for multithreaded executions, with the higher overhead primarily due to the absence of optimizations available in single-threaded executions.
 (See the article on Gross' presentation at the 2023 Python Language Summit~\cite{python-summit-2023-nogil}.)

@@ -40,11 +40,16 @@ A significant portion of the measured time involving the experiments of Chapter~
 Such is because a lot of increments and decrements to the reference count are made when the CPython interpreter executes instructions that involve an instance of \texttt{AtomicDict}.
 E.g.\ every time a lookup is performed, the Python interpreter increments and later decrements the reference count of the involved \texttt{AtomicDict} object.
 
-Considering the necessity to use atomic operations to perform the counting (two in the above example), the amount of time spent in those routines is great ($\approx$15\%--25\% in the benchmarks of Chapter~\ref{ch:measurements}).
+Considering the necessity to use atomic operations to perform the counting (two in the above example), the amount of time spent in those routines is great ($\approx$15\%--25\% in the experiments of Chapter~\ref{ch:measurements}).
 Instead of accessing the \texttt{AtomicDict} instance directly, though, it is possible to create a handle for it, like the one described in Section~\ref{subsec:atomic-int-handles}, an \texttt{AtomicDictHandle}.
 With the handle being a thread-local object, not intended to be shared with other threads, it can enjoy the fast-path for reference counting, thus reducing the time spent doing reference counting to a negligible amount.
 A thread-local handle \emph{represents} an \texttt{AtomicDict} object, and proxies calls to it.
 This addition would not require a concurrent GC, and would be beneficial regardless.
+
+We have successfully applied this design in the case of \texttt{AtomicInt}, a very simple concurrent integer implementation, detailed in Appendix~\ref{ch:atomic-int}.
+The strategy of using a thread-local proxy object was proved successful in almost eliminating the slow-paths taken for concurrent reference counting.
+During an exchange with Gross, he deemed this approach to be effective both for the nogil interpreter employed for the experiments, and for free-threading Python 3.13.
+%See measurement result in Appendix~\ref{ch:measurement-results} for further details.
 
 Since this would entail a reduction over the total amount of work that the CPU needs to perform, it is expected that an improvement of $\approx$20\% over the measurements of Chapter~\ref{ch:measurements} would be observed.
 
@@ -54,8 +59,8 @@ Since this would entail a reduction over the total amount of work that the CPU n
 A CPython process can have multiple sub-interpreters.
 Historically, since the GIL was deemed an intrinsic presence in the CPython interpreter, there have been various attempts at circumventing this limitation.
 Simplifying a lot of the relevant history, sub-interpreters were also designed with this problem in mind, each being endowed with a per-interpreter GIL\@.
-When a CPython process starts several threads and associates with each of them a sub-interpreter, they will all have their own GIL, enabling them to run in parallel notwithstanding the continued presence of multiple global interpreter locks.
-Sub-interpreters can be considered to be a fairly new technology, dating back to 2017, described in PEPs~554, 684 and 734~\cite{pep554,pep684,pep734}.
+When a CPython process starts several threads and associates with each of them a distinct sub-interpreter, they will all have their own GIL, enabling them to run in parallel notwithstanding the continued presence of multiple global interpreter locks.
+Sub-interpreters can be considered to be a fairly new technology, described in PEPs~554, 684 and 734~\cite{pep554,pep684,pep734}.
 To the author, cross-compatibility of a data structure between free-threading \emph{and} sub-interpreters constitutes an interesting research area.
 
 Sub-interpreter parallelization comes at the expense of not being able to easily share objects between interpreters, as also noted in~\cite[{\S}Per-Interpreter GIL]{pep703}.
@@ -83,6 +88,7 @@ Therefore, a queue can be considered \emph{shareable}, and it can also be enqueu
 This \emph{representational} behavior should hold some resemblance with the \texttt{Atom\-icDictHandle} described in the previous Section, whose primary purpose has nothing to do with sub-interpreters, but that can nonetheless be used to hold an immutable, and thus potentially \emph{shareable}, representation of a hash table.
 In fact, it can be entirely represented by an immutable pointer to the \texttt{AtomicDict} instance.
 In order for the handle to work properly with sub-interpreters, an additional requirement is that the \texttt{AtomicDict}'s internal data structures should not be Python objects, putting further interest into implementing a different memory management scheme.
+This would also be possible by extending the concurrent GC sketched out in Section~\ref{sec:concurrent-garbage-collection}.
 
 Supposing such is performed, more work needs to be carried out in order to ensure that the keys and values in \texttt{AtomicDict} are \emph{shareable}, by also making use of cross-interpreter object representations, in possibly a standardized way.
 During an exchange with Eric Snow, author of the PEPs on sub-interpreters, the necessity for standardized, customizable ways to create cross-interpreter object representations emerged as one of Snow's planned works.
