@@ -75,7 +75,7 @@ CPython's \texttt{dict} does not reduce its size after a large-enough sequence o
 
 \subsection{Python Hashing}\label{subsec:python-generated-hash-values}
 
-CPython takes a controversial approach to hashing that departs from the standard literature, but it is grounded in the concrete usage of their hash tables.
+CPython takes the following approach to hashing that is grounded in the concrete usage of their hash tables.
 Quoting from~\cite{dict-comment-hash}:
 \begin{quote}
 	Most hash schemes depend on having a ``good'' hash function, in the sense of simulating randomness.
@@ -94,7 +94,7 @@ The hash functions employed for built-in CPython data types enjoy the following 
 	\item objects which compare equal have the same hash value;
 	\item one object always produces the same hash value;
 	\item the computed hashes distribution is uniform, for a uniformly distributed set of values to be hashed;
-	\item their running time complexity is $O(1)$;
+	\item their running time complexity is reasonable, generally $O(1)$, and $O(n)$ for strings and tuples;
 	\item they don't necessitate holding locks, nor doing I/O, or other operations which may be generally considered improper for a hash function.
 \end{enumerate}
 The reader will probably have noticed how these properties are generally true for all hash functions, with properties (1) and (2) being fundamental for any hashing scheme to work, properties (4), and (5) being trivial for all hash functions known in the literature, and property (3) being what is usually the concern behind the implementation of hash functions.
@@ -106,6 +106,9 @@ For instance, it may acquire a lock, initiate a request to a remote machine on t
 
 Of course, such behaviors would be completely unexpected of a hash function.
 We will therefore resort to \emph{assume} that those properties hold, as we have no control over those functions.
+Most operations detailed in Chapters~\ref{ch:design}~and~\ref{ch:implementation} are lock-free and $E\left[O(1)\right]$ only under this assumption: that user-code hash functions are reasonable and enjoy the above properties.
+Furthermore, it turns out that most real Python programs that use dictionaries also use strings as keys.
+Thus, in the common cases, these properties hold.
 
 
 \subsection{With the Free-Threading Changes}\label{subsec:dict-free-threading}
@@ -331,8 +334,8 @@ Notwithstanding the theoretical achievement, the practicality of such an approac
 
 A migration process, as described in~\cite{hesselink}, comprises $\Omega(n)$ atomic memory writes.
 An atomic write can be considered to be an order of magnitude more expensive than a normal write.
-For instance, Intel SkyLake's \texttt{lock~cmpxchg8b} has a measured latency of 23 clock cycles, while a \texttt{mov} instruction from a register to memory has a latency of 2 cycles.
-(Agner Fog provides excellent and comprehensive tables for individual instruction latencies over several x86 processor architectures in~\cite{x86-instruction-tables}.)
+For instance, in the measurements cited in Chapter~\ref{ch:measurements}, the throughput of an atomic store operation in the best case is 377MOps/s, while a normal store would generally have a throughput close to the clock frequency of the machine in the best case (constantly writing to uncontended cache, as in the atomic store measurement).
+In the case of the machine examined, that would be an order of magnitude higher throughput.
 
 Because of the cost of atomic writes, it is easy to see how the cost of migrations quickly becomes prohibitive, as noted in~\cite{maier} as well:
 \begin{quote}

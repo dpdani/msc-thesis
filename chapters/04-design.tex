@@ -257,7 +257,7 @@ As the names suggest, the first one amortizes the cost of lookups and the second
 
 \section{Garbage Collection}\label{sec:garbage-collection}
 
-M.\ Micheal wrote in~\cite[\S2.3]{micheal-hash-tables}:
+M.\ Michael wrote in~\cite[\S2.3]{michael-hash-tables}:
 \begin{quote}
 [\ldots]
     The failure or delay of the garbage collector may prevent threads operating on lock-free objects from making progress indefinitely, thus violating lock-freedom.
@@ -274,6 +274,6 @@ The library also exposes C header files (though, their standalone usage has not 
 For those use-cases that don't employ Python code, but rather directly call \texttt{AtomicDict}'s C functions, true lock-freedom can be of interest.
 
 Changing the implementation to not be based on the provided GC, but instead using a dedicated memory management system, is entirely possible; albeit requiring a lot of additional work.
-One way this can be achieved is by implementing what Micheal describes in~\cite{micheal-safe-reclamation}, which employs so-called \emph{hazard pointers}, or any other suitable algorithm.
+One way this can be achieved is by implementing what Michael describes in~\cite{michael-safe-reclamation}, which employs so-called \emph{hazard pointers}, or any other suitable algorithm.
 
 Serious effort was not put into looking at this possible implementation change, as of the time of writing.

@@ -96,7 +96,7 @@ This is not a general approach to deferred reference counting, and thus departs 
 
 An additional change to CPython for free-threading is QSBR\@.
 Although not directly referred to as QSBR, it was initially described in~\cite[\S Mimalloc Page Reuse]{pep703}, and later discussed in greater detail in the accompanying GitHub issue~\cite{qsbr}.
-CPython's implementation of QSBR closely follows FreeBSD's implementation of Globally Unbounded Sequences, as noted by Gross in the referred issue.
+CPython's implementation of QSBR is derived from FreeBSD's implementation of Globally Unbounded Sequences, as noted by Gross in the referred issue.
 
 This mechanism serves to support lock-free read accesses to built-in data structures.
 For example, when a thread $t_r$ optimistically avoids locking a shared \texttt{dict} $H$'s keys array, due to a read-only access, an unsafe circumstance may arise.

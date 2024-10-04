@@ -24,8 +24,8 @@ In Chapter~\ref{ch:free-threading-python} we have seen numerous clever optimizat
 It is likely that for certain applications those optimizations are going to be fruitful.
 In Section~\ref{subsec:measurements-overheads} we have shown that for some trivial applications those optimizations are not enough, and performance is clearly subject to concurrent reference counting.
 
-A possibility that has not yet been explored for CPython is the design of a concurrent GC\@.
-It could be beneficial for the performance of multithreaded applications that some objects live in a different space, one that is not subject to reference counting at all.
+It is a belief of the author that adding a concurrent GC into CPython can help the performance of some concurrent Python programs.
+It could be beneficial that some objects live in a different space, one that is not subject to reference counting at all.
 In that ``concurrent'' object-space a completely different mechanism could be employed for memory reclamation.
 %For instance hazard-pointers, but several others are known in the literature.
 Objects that live in that space could be shared more effectively between threads, without hindering the performance of the application.
@@ -59,6 +59,7 @@ Since this would entail a reduction over the total amount of work that the CPU n
 A CPython process can have multiple sub-interpreters.
 Historically, since the GIL was deemed an intrinsic presence in the CPython interpreter, there have been various attempts at circumventing this limitation.
 Simplifying a lot of the relevant history, sub-interpreters were also designed with this problem in mind, each being endowed with a per-interpreter GIL\@.
+(Sub-interpreters have been part of CPython for over 25 years, but most of the current interest around them sparked from their recent enhancements around having a per-interpreter GIL\@.)
 When a CPython process starts several threads and associates with each of them a distinct sub-interpreter, they will all have their own GIL, enabling them to run in parallel notwithstanding the continued presence of multiple global interpreter locks.
 Sub-interpreters can be considered to be a fairly new technology, described in PEPs~554, 684 and 734~\cite{pep554,pep684,pep734}.
 To the author, cross-compatibility of a data structure between free-threading \emph{and} sub-interpreters constitutes an interesting research area.

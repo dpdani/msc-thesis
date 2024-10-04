@@ -97,11 +97,12 @@ Other implementations of Python exist, but are less popular.
 They are often specialized implementations that improve the performance of certain workloads.
 
 Python has a built-in hash table, named \texttt{dict}, which is considered an integral part of the language.
-It is a standard type, used in virtually \emph{every} Python program, either explicitly, by directly creating a \texttt{dict} instance, or implicitly.
-In fact, the CPython interpreter may create dictionaries in order to create an instance of a class (a very frequent operation in an object-oriented language).
+It is a standard type, used in virtually every Python program, either explicitly, by directly creating a \texttt{dict} instance, or implicitly.
+The CPython interpreter may create dictionaries in order to create an instance of a class, a very frequent operation in an object-oriented language.
 The attributes of an object are entirely stored in a hash table, which can also be accessed directly.
-(There exist minor exceptions.)
 In fact, the set of attributes of a Python object may be altered at runtime, thus differing from the one specified in its class.
+(This was true up to version 3.12, released October 2023, where instances were optimized to avoid allocating this attributes dictionary.
+The dictionary may still be created to view all the attributes of an object, upon a program's request.)
 
 An exploration on the usages of the built-in hash table has been carried out and it is presented in Section~\ref{sec:dict-metrics}.
 For a discussion on \texttt{dict}'s design, refer to Section~\ref{sec:python-dict-review}.
