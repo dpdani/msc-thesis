@@ -5,7 +5,7 @@
 \usepackage{ulem}
 \usepackage{wasysym}
 \usepackage{pythontex}
-\usepackage{listings}
+\usepackage{pythonhighlight}
 
 \title{A Concurrent Hash Table for CPython}
 \subtitle{MSc Thesis Dissertation}
@@ -32,7 +32,7 @@
 \begin{frame}
     \frametitle{Back to \sout{the future} 1994}
     \begin{center}
-        \includegraphics[width=0.66\textwidth]{./Winnt35}
+        \includegraphics[width=0.66\textwidth]{./Winnt35}<2->
     \end{center}
 \end{frame}
 
@@ -200,18 +200,24 @@
     \begin{itemize}
         \item Partitioned iterations
         \begin{tiny}
-            \begin{lstlisting}[language=Python]
+            \begin{python}
 d = AtomicDict(...)
 
 def my_thread(thread_id, threads_count):
     for key, value in d.fast_iter(partitions=threads_count, this_partition=thread_id)
         do_some_stuff(key, value)
-            \end{lstlisting}
+            \end{python}
         \end{tiny}
-        \item<2-> Reduce
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Small Contributions (cont.d)}
+
+    \begin{itemize}
+        \item Reduce
         \begin{tiny}
-            \begin{column}{\textwidth}<2->
-            \begin{lstlisting}[language=Python]
+            \begin{python}
 d = AtomicDict(...)
 
 data = [
@@ -227,10 +233,54 @@ def count(key, current, new):
     return current + new
 
 d.reduce(data, count)
-            \end{lstlisting}
-            \end{column}
+            \end{python}
         \end{tiny}
     \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]
+    \frametitle{Small Contributions (cont.d)}
+
+    \begin{itemize}
+        \item Batch Lookup
+        \begin{tiny}
+            \begin{python}
+foo = AtomicDict({'a': 1, 'b': 2, 'c': 3})
+
+result = foo.batch_getitem({
+  'a': None,
+  'b': None,
+  'f': None,
+})
+
+assert result == {
+  'a': 1,
+  'b': 2,
+  'f': cereggii.NOT_FOUND,
+}
+            \end{python}
+        \end{tiny}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Measurements}
+
+    \scalebox{0.4}{\input{../figures/iteration.pgf}}
+    \scalebox{0.4}{\input{../figures/aggregation_reduce.pgf}}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Measurements (cont.d)}
+
+    \centering\scalebox{0.4}{\input{../figures/batch_lookup.pgf}}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Measurements (cont.d)}
+
+    \scalebox{0.4}{\input{../figures/lookup_succ.pgf}}
+    \scalebox{0.4}{\input{../figures/lookup_fail.pgf}}
 \end{frame}
 
 \begin{frame}
@@ -284,6 +334,9 @@ d.reduce(data, count)
                     \item double-hashing
                     \item split index and data tables
                     \item lock-free*
+                    \item partitioned iterations
+                    \item reduce
+                    \item batch lookup
                 \end{itemize}
                 \item Python Language Summit
             \end{enumerate}
